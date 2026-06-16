@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/illwill/cardbot/app"
-	"github.com/illwill/cardbot/config"
+	"github.com/wdphoto/cardBot/app"
+	"github.com/wdphoto/cardBot/config"
 )
 
 func TestPromptDestinationReadlineIO_UsesProvidedReader(t *testing.T) {

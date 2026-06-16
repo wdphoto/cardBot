@@ -4,11 +4,11 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/illwill/cardbot/analyze"
-	"github.com/illwill/cardbot/cardcopy"
-	"github.com/illwill/cardbot/detect"
-	"github.com/illwill/cardbot/dotfile"
-	"github.com/illwill/cardbot/update"
+	"github.com/wdphoto/cardBot/analyze"
+	"github.com/wdphoto/cardBot/cardcopy"
+	"github.com/wdphoto/cardBot/detect"
+	"github.com/wdphoto/cardBot/dotfile"
+	"github.com/wdphoto/cardBot/update"
 )
 
 // cardDetector is the app-facing detector contract.

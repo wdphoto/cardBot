@@ -1,4 +1,4 @@
-module github.com/illwill/cardbot
+module github.com/wdphoto/cardBot
 
 go 1.25.0
 

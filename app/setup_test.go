@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/illwill/cardbot/config"
+	"github.com/wdphoto/cardBot/config"
 )
 
 func TestRunSetup_WritesNamingModeToConfig(t *testing.T) {

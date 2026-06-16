@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/illwill/cardbot/analyze"
-	"github.com/illwill/cardbot/config"
+	"github.com/wdphoto/cardBot/analyze"
+	"github.com/wdphoto/cardBot/config"
 )
 
 func TestTargetPath_SkipsScanningAndAnalyzesImmediately(t *testing.T) {

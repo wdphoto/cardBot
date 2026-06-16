@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/illwill/cardbot/cardcopy"
-	"github.com/illwill/cardbot/detect"
-	"github.com/illwill/cardbot/dotfile"
+	"github.com/wdphoto/cardBot/cardcopy"
+	"github.com/wdphoto/cardBot/detect"
+	"github.com/wdphoto/cardBot/dotfile"
 )
 
 func TestHandleCopySuccess_DryRun_NoSideEffects(t *testing.T) {

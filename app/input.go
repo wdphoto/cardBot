@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/illwill/cardbot/analyze"
+	"github.com/wdphoto/cardBot/analyze"
 )
 
 // inputAction is the parsed intent of a user command.

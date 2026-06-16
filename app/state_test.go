@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/illwill/cardbot/cardcopy"
-	"github.com/illwill/cardbot/config"
-	"github.com/illwill/cardbot/detect"
+	"github.com/wdphoto/cardBot/cardcopy"
+	"github.com/wdphoto/cardBot/config"
+	"github.com/wdphoto/cardBot/detect"
 )
 
 type fakeDetector struct {

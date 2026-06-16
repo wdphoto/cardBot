@@ -6,9 +6,9 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/illwill/cardbot/config"
-	"github.com/illwill/cardbot/launch"
-	"github.com/illwill/cardbot/term"
+	"github.com/wdphoto/cardBot/config"
+	"github.com/wdphoto/cardBot/launch"
+	"github.com/wdphoto/cardBot/term"
 )
 
 func normalizeDaemonTerminalAppForLaunch(name string) string {

@@ -14,8 +14,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/illwill/cardbot/detect"
-	"github.com/illwill/cardbot/term"
+	"github.com/wdphoto/cardBot/detect"
+	"github.com/wdphoto/cardBot/term"
 )
 
 // detector is the consumer-side interface for card detection.

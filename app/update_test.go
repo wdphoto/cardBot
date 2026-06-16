@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/illwill/cardbot/update"
+	"github.com/wdphoto/cardBot/update"
 )
 
 func TestMaybeCheckForUpdate_UpdateAvailable(t *testing.T) {

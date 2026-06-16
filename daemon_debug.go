@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/illwill/cardbot/config"
+	"github.com/wdphoto/cardBot/config"
 )
 
 type daemonDebugMode string

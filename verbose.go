@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/illwill/cardbot/app"
-	"github.com/illwill/cardbot/config"
+	"github.com/wdphoto/cardBot/app"
+	"github.com/wdphoto/cardBot/config"
 )
 
 // fprintVerboseSettings prints the settings table after the shared bootup checklist.

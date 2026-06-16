@@ -13,10 +13,10 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/illwill/cardbot/config"
-	"github.com/illwill/cardbot/daemon"
-	"github.com/illwill/cardbot/instance"
-	"github.com/illwill/cardbot/launch"
+	"github.com/wdphoto/cardBot/config"
+	"github.com/wdphoto/cardBot/daemon"
+	"github.com/wdphoto/cardBot/instance"
+	"github.com/wdphoto/cardBot/launch"
 )
 
 type daemonStatusOptions struct {

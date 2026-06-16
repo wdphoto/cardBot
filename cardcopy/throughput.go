@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/illwill/cardbot/fsutil"
+	"github.com/wdphoto/cardBot/fsutil"
 )
 
 // throughputTracker computes smoothed throughput and ETA using an exponential

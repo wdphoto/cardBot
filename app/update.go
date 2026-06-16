@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/illwill/cardbot/cblog"
-	"github.com/illwill/cardbot/term"
-	"github.com/illwill/cardbot/update"
+	"github.com/wdphoto/cardBot/cblog"
+	"github.com/wdphoto/cardBot/term"
+	"github.com/wdphoto/cardBot/update"
 )
 
 const (

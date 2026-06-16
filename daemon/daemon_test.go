@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/illwill/cardbot/detect"
+	"github.com/wdphoto/cardBot/detect"
 )
 
 // ---------------------------------------------------------------------------

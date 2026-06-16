@@ -7,9 +7,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/illwill/cardbot/app"
-	"github.com/illwill/cardbot/config"
-	"github.com/illwill/cardbot/pick"
+	"github.com/wdphoto/cardBot/app"
+	"github.com/wdphoto/cardBot/config"
+	"github.com/wdphoto/cardBot/pick"
 )
 
 func promptDestinationWithIO(defaultPath string, in *bufio.Reader, out io.Writer) string {

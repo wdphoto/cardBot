@@ -5,12 +5,12 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/illwill/cardbot/cblog"
-	"github.com/illwill/cardbot/config"
-	"github.com/illwill/cardbot/daemon"
-	"github.com/illwill/cardbot/instance"
-	"github.com/illwill/cardbot/launch"
-	"github.com/illwill/cardbot/term"
+	"github.com/wdphoto/cardBot/cblog"
+	"github.com/wdphoto/cardBot/config"
+	"github.com/wdphoto/cardBot/daemon"
+	"github.com/wdphoto/cardBot/instance"
+	"github.com/wdphoto/cardBot/launch"
+	"github.com/wdphoto/cardBot/term"
 )
 
 // runDaemonCommand starts the background daemon that watches for card

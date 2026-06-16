@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/illwill/cardbot/analyze"
+	"github.com/wdphoto/cardBot/analyze"
 )
 
 func TestParseInputAction(t *testing.T) {

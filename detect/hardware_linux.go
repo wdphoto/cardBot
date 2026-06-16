@@ -11,7 +11,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/illwill/cardbot/fsutil"
+	"github.com/wdphoto/cardBot/fsutil"
 )
 
 // HardwareInfo contains device-level information about the card.

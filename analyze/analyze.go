@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/evanoberholster/imagemeta"
-	"github.com/illwill/cardbot/fsutil"
+	"github.com/wdphoto/cardBot/fsutil"
 )
 
 // supportedExif lists extensions we attempt EXIF extraction on (uppercase, no dot).

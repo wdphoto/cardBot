@@ -9,11 +9,11 @@ import (
 	"time"
 
 	"github.com/briandowns/spinner"
-	"github.com/illwill/cardbot/analyze"
-	"github.com/illwill/cardbot/cblog"
-	"github.com/illwill/cardbot/config"
-	"github.com/illwill/cardbot/detect"
-	"github.com/illwill/cardbot/term"
+	"github.com/wdphoto/cardBot/analyze"
+	"github.com/wdphoto/cardBot/cblog"
+	"github.com/wdphoto/cardBot/config"
+	"github.com/wdphoto/cardBot/detect"
+	"github.com/wdphoto/cardBot/term"
 )
 
 // UX delays — gives the user time to read each startup line before the next appears.

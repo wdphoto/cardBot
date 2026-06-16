@@ -14,7 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/illwill/cardbot/fsutil"
+	"github.com/wdphoto/cardBot/fsutil"
 )
 
 // ProgressFunc is called periodically during the copy with current stats.

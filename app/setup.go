@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/illwill/cardbot/config"
+	"github.com/wdphoto/cardBot/config"
 )
 
 // SetupPrompter reads setup answers from a shared buffered input stream.

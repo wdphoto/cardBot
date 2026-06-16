@@ -15,12 +15,12 @@ import (
 	"time"
 
 	"github.com/briandowns/spinner"
-	"github.com/illwill/cardbot/app"
-	"github.com/illwill/cardbot/cblog"
-	"github.com/illwill/cardbot/config"
-	"github.com/illwill/cardbot/instance"
-	"github.com/illwill/cardbot/term"
-	"github.com/illwill/cardbot/update"
+	"github.com/wdphoto/cardBot/app"
+	"github.com/wdphoto/cardBot/cblog"
+	"github.com/wdphoto/cardBot/config"
+	"github.com/wdphoto/cardBot/instance"
+	"github.com/wdphoto/cardBot/term"
+	"github.com/wdphoto/cardBot/update"
 )
 
 // Set at build time via -ldflags.

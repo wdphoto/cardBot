@@ -7,14 +7,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/illwill/cardbot/analyze"
-	"github.com/illwill/cardbot/cardcopy"
-	"github.com/illwill/cardbot/config"
-	"github.com/illwill/cardbot/detect"
-	"github.com/illwill/cardbot/dotfile"
-	"github.com/illwill/cardbot/fsutil"
-	"github.com/illwill/cardbot/speedtest"
-	"github.com/illwill/cardbot/term"
+	"github.com/wdphoto/cardBot/analyze"
+	"github.com/wdphoto/cardBot/cardcopy"
+	"github.com/wdphoto/cardBot/config"
+	"github.com/wdphoto/cardBot/detect"
+	"github.com/wdphoto/cardBot/dotfile"
+	"github.com/wdphoto/cardBot/fsutil"
+	"github.com/wdphoto/cardBot/speedtest"
+	"github.com/wdphoto/cardBot/term"
 )
 
 const dryRunPreviewLimit = 200

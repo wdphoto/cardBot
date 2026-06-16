@@ -5,10 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/illwill/cardbot/analyze"
-	"github.com/illwill/cardbot/config"
-	"github.com/illwill/cardbot/detect"
-	"github.com/illwill/cardbot/term"
+	"github.com/wdphoto/cardBot/analyze"
+	"github.com/wdphoto/cardBot/config"
+	"github.com/wdphoto/cardBot/detect"
+	"github.com/wdphoto/cardBot/term"
 )
 
 func captureStdout(t *testing.T, fn func()) string {
