@@ -91,8 +91,10 @@ cardbot --setup
 |---------|-------|--------|
 | **0.7.0** | Code Refactor | Complete |
 | **0.8.0** | Card copy operations | Complete |
-| **0.9.0** | Card copy part deux | Next |
+| **0.9.0** | Release/copy correctness pass | In progress |
 | **0.10.0** | Copyright check and injection | Planned |
+
+See [`TODO.md`](TODO.md) for the current technical backlog and discussion items.
 
 
 ## Uninstalling

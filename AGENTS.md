@@ -63,6 +63,7 @@ Prefer `make test` before committing meaningful Go changes.
 
 ## Coding rules
 
+- Prefer idiomatic, boring Go over clever abstractions.
 - Run `gofmt` on Go files you edit.
 - Keep imports using the exact module prefix `github.com/wdphoto/cardBot`.
 - Keep platform-specific behavior behind the existing OS-specific files/build constraints.
@@ -70,6 +71,7 @@ Prefer `make test` before committing meaningful Go changes.
 - Avoid committing generated binaries, local configs, logs, caches, profiles, or secrets.
 - Do not vendor dependencies unless the user explicitly asks.
 - Keep install/update docs and scripts aligned with the canonical GitHub repo.
+- Keep `TODO.md` updated when adding, closing, or intentionally deferring review findings.
 
 ## Security and local files
 
@@ -82,5 +84,6 @@ Prefer `make test` before committing meaningful Go changes.
 
 - Be conservative with destructive actions and ask first.
 - Prefer small, focused diffs.
+- Push back on requests that risk data loss, release confusion, security exposure, needless complexity, or non-idiomatic Go.
 - Show file paths clearly.
 - If tests cannot be run, say exactly why and what command should be run next.
