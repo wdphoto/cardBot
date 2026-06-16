@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	DefaultRepo    = "willduncanphoto/cardBot"
+	DefaultRepo    = "wdphoto/cardBot"
 	DefaultAPIBase = "https://api.github.com"
 	userAgent      = "cardbot-updater"
 )

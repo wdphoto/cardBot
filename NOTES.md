@@ -5,20 +5,20 @@
 Latest release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/willduncanphoto/cardBot/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/wdphoto/cardBot/main/scripts/install.sh | sh
 ```
 
 Specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/willduncanphoto/cardBot/main/scripts/install.sh | sh -s -- --version <version>
+curl -fsSL https://raw.githubusercontent.com/wdphoto/cardBot/main/scripts/install.sh | sh -s -- --version <version>
 # example: --version v0.7.3
 ```
 
 Install to custom path without sudo:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/willduncanphoto/cardBot/main/scripts/install.sh | sh -s -- --install-dir "$HOME/.local/bin" --no-sudo
+curl -fsSL https://raw.githubusercontent.com/wdphoto/cardBot/main/scripts/install.sh | sh -s -- --install-dir "$HOME/.local/bin" --no-sudo
 ```
 
 Installer options:
@@ -30,13 +30,13 @@ sh scripts/install.sh --help
 Uninstall:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/willduncanphoto/cardBot/main/scripts/uninstall.sh | sh
+curl -fsSL https://raw.githubusercontent.com/wdphoto/cardBot/main/scripts/uninstall.sh | sh
 ```
 
 Uninstall and purge config/log files:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/willduncanphoto/cardBot/main/scripts/uninstall.sh | sh -s -- --purge
+curl -fsSL https://raw.githubusercontent.com/wdphoto/cardBot/main/scripts/uninstall.sh | sh -s -- --purge
 ```
 
 Uninstaller options:
@@ -52,28 +52,28 @@ sh scripts/uninstall.sh --help
 ### macOS Apple Silicon (arm64)
 
 ```bash
-curl -fL -o cardbot https://github.com/willduncanphoto/cardBot/releases/latest/download/cardbot-darwin-arm64
+curl -fL -o cardbot https://github.com/wdphoto/cardBot/releases/latest/download/cardbot-darwin-arm64
 install -m 755 cardbot /usr/local/bin/cardbot
 ```
 
 ### macOS Intel (amd64)
 
 ```bash
-curl -fL -o cardbot https://github.com/willduncanphoto/cardBot/releases/latest/download/cardbot-darwin-amd64
+curl -fL -o cardbot https://github.com/wdphoto/cardBot/releases/latest/download/cardbot-darwin-amd64
 install -m 755 cardbot /usr/local/bin/cardbot
 ```
 
 ### Linux amd64
 
 ```bash
-curl -fL -o cardbot https://github.com/willduncanphoto/cardBot/releases/latest/download/cardbot-linux-amd64
+curl -fL -o cardbot https://github.com/wdphoto/cardBot/releases/latest/download/cardbot-linux-amd64
 install -m 755 cardbot /usr/local/bin/cardbot
 ```
 
 ### Linux arm64
 
 ```bash
-curl -fL -o cardbot https://github.com/willduncanphoto/cardBot/releases/latest/download/cardbot-linux-arm64
+curl -fL -o cardbot https://github.com/wdphoto/cardBot/releases/latest/download/cardbot-linux-arm64
 install -m 755 cardbot /usr/local/bin/cardbot
 ```
 
@@ -81,7 +81,7 @@ install -m 755 cardbot /usr/local/bin/cardbot
 
 ```bash
 mkdir -p "$HOME/.local/bin"
-curl -fL -o "$HOME/.local/bin/cardbot" https://github.com/willduncanphoto/cardBot/releases/latest/download/cardbot-<os>-<arch>
+curl -fL -o "$HOME/.local/bin/cardbot" https://github.com/wdphoto/cardBot/releases/latest/download/cardbot-<os>-<arch>
 chmod +x "$HOME/.local/bin/cardbot"
 ```
 
@@ -96,7 +96,7 @@ Requirements:
 - Git
 
 ```bash
-git clone https://github.com/willduncanphoto/cardBot.git
+git clone https://github.com/wdphoto/cardBot.git
 cd cardBot
 go build -o cardbot .
 ./cardbot --version

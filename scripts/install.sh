@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-REPO="${REPO:-willduncanphoto/cardBot}"
+REPO="${REPO:-wdphoto/cardBot}"
 VERSION="${VERSION:-latest}"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 DEFAULT_INSTALL_DIR="/usr/local/bin"
@@ -19,7 +19,7 @@ Usage:
 Options:
   --version <version>     Install a specific version (example: v0.7.3). Default: latest
   --install-dir <path>    Install directory. Default: /usr/local/bin
-  --repo <owner/repo>     GitHub repo. Default: willduncanphoto/cardBot
+  --repo <owner/repo>     GitHub repo. Default: wdphoto/cardBot
   --no-sudo               Do not attempt sudo for protected install dirs
   --dry-run               Print actions without installing
   -h, --help              Show help

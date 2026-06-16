@@ -37,7 +37,7 @@ Recommended minimum: macOS 10.13 High Sierra (according to the clankers)
 The easy install:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/willduncanphoto/cardBot/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/wdphoto/cardBot/main/scripts/install.sh | sh
 ```
 
 ## Usage
