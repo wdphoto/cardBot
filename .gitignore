@@ -14,8 +14,12 @@ cardbot
 # Test binary, built with `go test -c`
 *.test
 
-# Output of the go coverage tool
+# Output of the go coverage/profiling tools
 *.out
+*.prof
+*.pprof
+*.coverprofile
+coverage/
 coverage.html
 coverage.txt
 
@@ -35,11 +39,27 @@ go.work
 
 # Environment files
 .env
-.env.local
+.env.*
+!.env.example
+!.env.*.example
 
 # Logs
 *.log
 logs/
+
+# Secrets and credentials
+secrets/
+.secrets/
+*.secret
+*.token
+*.credentials
+*.pem
+*.key
+*.p12
+*.pfx
+.netrc
+id_rsa
+id_ed25519
 
 # OS files
 Thumbs.db
@@ -54,6 +74,8 @@ temp/
 
 # Local config files that shouldn't be committed
 config.local.json
+config.local.*
+*.local.json
 
 # Internal documentation (not for public repo)
 agent/
