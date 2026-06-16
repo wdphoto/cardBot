@@ -111,34 +111,51 @@ func NewDetector() *Detector {
 
 // Start begins monitoring for card insertion/removal.
 func (d *Detector) Start() error {
+	d.mu.RLock()
+	started := d.started
+	d.mu.RUnlock()
+	if started {
+		return fmt.Errorf("detector already started")
+	}
+
 	detectorMu.Lock()
 	globalDetector = d
 	detectorMu.Unlock()
 
+	ready := make(chan error, 1)
 	go func() {
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
 
-		d.session = C.DASessionCreate(C.kCFAllocatorDefault)
-		if d.session == 0 {
+		session := C.DASessionCreate(C.kCFAllocatorDefault)
+		if session == 0 {
+			detectorMu.Lock()
+			if globalDetector == d {
+				globalDetector = nil
+			}
+			detectorMu.Unlock()
+			ready <- fmt.Errorf("creating disk arbitration session")
 			return
 		}
 
-		d.runLoop = C.CFRunLoopGetCurrent()
-		C.registerCallbacks(d.session)
-		C.scheduleOnRunLoop(d.session, d.runLoop)
+		runLoop := C.CFRunLoopGetCurrent()
+		C.registerCallbacks(session)
+		C.scheduleOnRunLoop(session, runLoop)
 
 		d.mu.Lock()
+		d.session = session
+		d.runLoop = runLoop
 		d.started = true
 		d.mu.Unlock()
+
+		ready <- nil
 
 		// Scan volumes already mounted at startup; native callbacks handle future events.
 		go d.scanExistingVolumes()
 		C.CFRunLoopRun()
 	}()
 
-	time.Sleep(100 * time.Millisecond)
-	return nil
+	return <-ready
 }
 
 // Stop halts card monitoring.

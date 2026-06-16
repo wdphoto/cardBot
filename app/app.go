@@ -42,6 +42,7 @@ type App struct {
 	phase       appPhase           // explicit runtime phase
 	targetPath  string             // optional: skip scanning and target this path directly
 	lastTS      string             // last printed timestamp for indentation
+	tsMu        sync.Mutex         // protects lastTS without re-entering a.mu from print paths
 
 	newDetector  detectorFactory
 	newAnalyzer  analyzerFactory
@@ -118,6 +119,8 @@ const tsIndent = "                     "
 // whitespace of the same width so subsequent lines stay aligned.
 func (a *App) TsPrefix() string {
 	now := term.Ts()
+	a.tsMu.Lock()
+	defer a.tsMu.Unlock()
 	if now == a.lastTS {
 		return tsIndent
 	}
@@ -128,6 +131,8 @@ func (a *App) TsPrefix() string {
 // SetLastTS records a timestamp so that TsPrefix can deduplicate it.
 // Used by main.go to sync the bootup timestamp with the app.
 func (a *App) SetLastTS(t string) {
+	a.tsMu.Lock()
+	defer a.tsMu.Unlock()
 	a.lastTS = t
 }
 

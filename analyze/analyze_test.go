@@ -135,6 +135,29 @@ func TestAnalyze_SkipsHiddenFiles(t *testing.T) {
 	}
 }
 
+func TestAnalyze_SkipsSymlinks(t *testing.T) {
+	t.Parallel()
+	root := createTestCard(t, map[string]testFile{
+		"100NIKON/DSC_0001.NEF": {size: 1000, mtime: date(2025, 3, 8)},
+	})
+
+	dcim := filepath.Join(root, "DCIM", "100NIKON")
+	if err := os.Symlink(filepath.Join(dcim, "DSC_0001.NEF"), filepath.Join(dcim, "LINK.NEF")); err != nil {
+		t.Skipf("symlinks not supported: %v", err)
+	}
+
+	result, err := New(root).Analyze(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.FileCount != 1 {
+		t.Fatalf("FileCount = %d, want 1", result.FileCount)
+	}
+	if _, ok := result.FileDates[filepath.Join("100NIKON", "LINK.NEF")]; ok {
+		t.Fatal("symlink should not be included in FileDates")
+	}
+}
+
 func TestAnalyze_EmptyCard(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -335,7 +358,7 @@ func TestSortedKeys(t *testing.T) {
 		got := sortedKeys(map[string]bool{
 			"NIKKOR Z 70-200mm f/2.8 VR S": true,
 			"NIKKOR Z 24-70mm f/2.8 S":     true,
-			"NIKKOR Z 50mm f/1.2 S":         true,
+			"NIKKOR Z 50mm f/1.2 S":        true,
 		})
 		want := []string{
 			"NIKKOR Z 24-70mm f/2.8 S",

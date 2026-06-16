@@ -76,6 +76,13 @@ func Run(ctx context.Context, opts Options, onProgress ProgressFunc) (*Result, e
 		opts.BufferKB = 256
 	}
 
+	cardPath, destBase, err := normalizeCopyRoots(opts.CardPath, opts.DestBase)
+	if err != nil {
+		return nil, err
+	}
+	opts.CardPath = cardPath
+	opts.DestBase = destBase
+
 	dcim := filepath.Join(opts.CardPath, "DCIM")
 	if _, err := os.Stat(dcim); err != nil {
 		return nil, fmt.Errorf("no DCIM folder found on card")
@@ -92,7 +99,7 @@ func Run(ctx context.Context, opts Options, onProgress ProgressFunc) (*Result, e
 	var totalBytes int64
 	var walkWarnings []string
 
-	err := filepath.WalkDir(dcim, func(path string, d os.DirEntry, err error) error {
+	err = filepath.WalkDir(dcim, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			// Log permission/IO errors but keep walking.
 			// Broken symlinks and not-exist are silently skipped.
@@ -225,11 +232,15 @@ func Run(ctx context.Context, opts Options, onProgress ProgressFunc) (*Result, e
 
 	// --- Disk space check ---
 	// If we can query free space and it's clearly insufficient, fail fast.
-	// Note: files already at the destination will be skipped during copy,
-	// so this check may be conservative for re-copies.
-	if free, ok := diskFreeBytes(opts.DestBase); ok && free < totalBytes {
+	// Only count files that will actually be written; existing same-size files
+	// are skipped during copy and do not require additional destination space.
+	bytesRequired, err := bytesRequiredForCopy(files, destPaths, opts.DestBase)
+	if err != nil {
+		return &Result{DestPath: opts.DestBase}, err
+	}
+	if free, ok := diskFreeBytes(opts.DestBase); ok && free < bytesRequired {
 		return nil, fmt.Errorf("not enough space on destination: need %s, only %s free",
-			fsutil.FormatBytes(totalBytes), fsutil.FormatBytes(free))
+			fsutil.FormatBytes(bytesRequired), fsutil.FormatBytes(free))
 	}
 
 	// --- Phase 2: Copy ---
@@ -262,13 +273,9 @@ func Run(ctx context.Context, opts Options, onProgress ProgressFunc) (*Result, e
 		}
 
 		f := &files[i]
-		destPath := filepath.Join(opts.DestBase, f.date, destPaths[i])
-
-		// Guard against path traversal via malicious card paths.
-		destPath = filepath.Clean(destPath)
-		if !strings.HasPrefix(destPath, filepath.Clean(opts.DestBase)+string(filepath.Separator)) {
-			return partialResult(filesDone, filesSkipped, bytesDone, bytesSkipped, start, opts.DestBase),
-				fmt.Errorf("refusing to write outside destination: %s", destPath)
+		destPath, err := safeDestPath(opts.DestBase, f.date, destPaths[i])
+		if err != nil {
+			return partialResult(filesDone, filesSkipped, bytesDone, bytesSkipped, start, opts.DestBase), err
 		}
 
 		// Check if destination already exists with correct size (skip).
@@ -339,6 +346,90 @@ func Run(ctx context.Context, opts Options, onProgress ProgressFunc) (*Result, e
 		Warnings:     walkWarnings,
 		VerifyMethod: verifyMethod,
 	}, nil
+}
+
+func normalizeCopyRoots(cardPath, destBase string) (string, string, error) {
+	cardPath = strings.TrimSpace(cardPath)
+	if cardPath == "" {
+		return "", "", fmt.Errorf("card path is required")
+	}
+	destBase = strings.TrimSpace(destBase)
+	if destBase == "" {
+		return "", "", fmt.Errorf("destination path is required")
+	}
+
+	cardRoot, err := pathForComparison(cardPath)
+	if err != nil {
+		return "", "", fmt.Errorf("resolving card path: %w", err)
+	}
+	destRoot, err := pathForComparison(destBase)
+	if err != nil {
+		return "", "", fmt.Errorf("resolving destination path: %w", err)
+	}
+
+	if isSameOrWithin(cardRoot, destRoot) {
+		return "", "", fmt.Errorf("destination %s is inside source card %s", destRoot, cardRoot)
+	}
+	return cardRoot, destRoot, nil
+}
+
+func pathForComparison(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	return resolveSymlinksBestEffort(filepath.Clean(abs)), nil
+}
+
+func resolveSymlinksBestEffort(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return filepath.Clean(resolved)
+	}
+
+	for dir := filepath.Dir(path); ; dir = filepath.Dir(dir) {
+		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+			rel, relErr := filepath.Rel(dir, path)
+			if relErr != nil {
+				return filepath.Clean(resolved)
+			}
+			return filepath.Clean(filepath.Join(resolved, rel))
+		}
+		next := filepath.Dir(dir)
+		if next == dir {
+			return filepath.Clean(path)
+		}
+	}
+}
+
+func isSameOrWithin(parent, child string) bool {
+	rel, err := filepath.Rel(parent, child)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+}
+
+func safeDestPath(destBase, date, relPath string) (string, error) {
+	destPath := filepath.Clean(filepath.Join(destBase, date, relPath))
+	if !isSameOrWithin(destBase, destPath) {
+		return "", fmt.Errorf("refusing to write outside destination: %s", destPath)
+	}
+	return destPath, nil
+}
+
+func bytesRequiredForCopy(files []fileEntry, destPaths []string, destBase string) (int64, error) {
+	var required int64
+	for i := range files {
+		destPath, err := safeDestPath(destBase, files[i].date, destPaths[i])
+		if err != nil {
+			return 0, err
+		}
+		if info, err := os.Stat(destPath); err == nil && info.Size() == files[i].size {
+			continue
+		}
+		required += files[i].size
+	}
+	return required, nil
 }
 
 // partialResult builds a Result from in-progress counters.

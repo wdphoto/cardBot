@@ -524,6 +524,77 @@ func TestCopy_PathTraversal(t *testing.T) {
 	}
 }
 
+func TestCopy_RejectsDestinationOnSourceCard(t *testing.T) {
+	t.Parallel()
+	card := createTestCard(t, map[string]testFileSpec{
+		"100NIKON/DSC_0001.NEF": {data: make([]byte, 100), mtime: date(2026, 3, 8)},
+	})
+
+	tests := []struct {
+		name string
+		dest string
+	}{
+		{name: "card root", dest: card},
+		{name: "inside card", dest: filepath.Join(card, "backup")},
+		{name: "inside DCIM", dest: filepath.Join(card, "DCIM", "backup")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Run(context.Background(), Options{CardPath: card, DestBase: tt.dest}, nil)
+			if err == nil {
+				t.Fatal("expected error for destination on source card")
+			}
+		})
+	}
+}
+
+func TestCopy_DiskSpaceCheckIgnoresExistingSkippedFiles(t *testing.T) {
+	t.Parallel()
+	tmp := t.TempDir()
+	free, ok := diskFreeBytes(tmp)
+	if !ok || free <= 0 {
+		t.Skip("free-space query unavailable")
+	}
+
+	card := filepath.Join(tmp, "card")
+	src := filepath.Join(card, "DCIM", "100NIKON", "DSC_0001.NEF")
+	if err := os.MkdirAll(filepath.Dir(src), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	size := free + 1<<20
+	if err := os.WriteFile(src, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(src, size); err != nil {
+		t.Skipf("sparse files unavailable: %v", err)
+	}
+	mtime := date(2026, 3, 8)
+	if err := os.Chtimes(src, mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+
+	dest := filepath.Join(tmp, "dest")
+	existing := filepath.Join(dest, "2026-03-08", "100NIKON", "DSC_0001.NEF")
+	if err := os.MkdirAll(filepath.Dir(existing), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(existing, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(existing, size); err != nil {
+		t.Skipf("sparse files unavailable: %v", err)
+	}
+
+	result, err := Run(context.Background(), Options{CardPath: card, DestBase: dest}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.FilesCopied != 0 || result.FilesSkipped != 1 {
+		t.Fatalf("copied/skipped = %d/%d, want 0/1", result.FilesCopied, result.FilesSkipped)
+	}
+}
+
 func TestCopy_SourceMissing(t *testing.T) {
 	t.Parallel()
 	// Create a card, then delete a source file before copy runs.

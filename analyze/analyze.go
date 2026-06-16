@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -210,6 +211,10 @@ func (a *Analyzer) Analyze(ctx context.Context) (*Result, error) {
 		if fsutil.IsHidden(d.Name()) {
 			return nil
 		}
+		// Match copy behavior: do not follow symlinks on untrusted card media.
+		if d.Type()&fs.ModeSymlink != 0 {
+			return nil
+		}
 
 		info, err := d.Info()
 		if err != nil {
@@ -244,6 +249,16 @@ func (a *Analyzer) Analyze(ctx context.Context) (*Result, error) {
 	exifResults := make([]exifResult, len(files))
 
 	var processed atomic.Int64
+	onProgress := a.onProgress
+	var progressMu sync.Mutex
+	reportProgress := func(count int) {
+		if onProgress == nil {
+			return
+		}
+		progressMu.Lock()
+		defer progressMu.Unlock()
+		onProgress(count)
+	}
 
 	var wg sync.WaitGroup
 	for w := 0; w < a.workers; w++ {
@@ -268,8 +283,8 @@ func (a *Analyzer) Analyze(ctx context.Context) (*Result, error) {
 					ok:     ok,
 				}
 				n := processed.Add(1)
-				if a.onProgress != nil && n%100 == 0 {
-					a.onProgress(int(n))
+				if n%100 == 0 {
+					reportProgress(int(n))
 				}
 			}
 		}()
@@ -296,9 +311,7 @@ loop:
 
 	// Fire final progress with total count.
 	totalFiles := len(files)
-	if a.onProgress != nil {
-		a.onProgress(totalFiles)
-	}
+	reportProgress(totalFiles)
 
 	// --- Phase 3: Merge ---
 	groups := make(map[string]*dateAccumulator)
