@@ -17,7 +17,7 @@ Usage:
   sh install.sh [options]
 
 Options:
-  --version <version>     Install a specific version (example: v0.7.3). Default: latest
+  --version <version>     Install a specific version (example: v0.0.10). Default: latest
   --install-dir <path>    Install directory. Default: /usr/local/bin
   --repo <owner/repo>     GitHub repo. Default: wdphoto/cardBot
   --no-sudo               Do not attempt sudo for protected install dirs
@@ -26,7 +26,7 @@ Options:
 
 Examples:
   sh install.sh
-  sh install.sh --version v0.7.3
+  sh install.sh --version v0.0.10
   sh install.sh --install-dir "$HOME/.local/bin" --no-sudo
 EOF
 }

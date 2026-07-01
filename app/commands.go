@@ -13,7 +13,6 @@ import (
 	"github.com/wdphoto/cardBot/detect"
 	"github.com/wdphoto/cardBot/dotfile"
 	"github.com/wdphoto/cardBot/fsutil"
-	"github.com/wdphoto/cardBot/speedtest"
 	"github.com/wdphoto/cardBot/term"
 )
 
@@ -352,29 +351,4 @@ func (a *App) handleCopySuccess(card *detect.Card, mode, destBase string, result
 	a.mu.Lock()
 	a.copiedModes[mode] = true
 	a.mu.Unlock()
-}
-
-func (a *App) runSpeedTest(card *detect.Card) {
-	fmt.Println()
-	fmt.Printf("%s Speed test starting (256 MB)...\n", a.TsPrefix())
-	a.logf("Speed test starting on %s", card.Path)
-
-	result, err := speedtest.Run(card.Path, func(phase string, mbps float64) {
-		fmt.Printf("\r%s %s... %.1f MB/s    ", term.DimTS(term.Ts()), phase, mbps)
-	})
-	fmt.Println()
-
-	if err != nil {
-		fmt.Printf("Speed test failed: %s\n", term.FriendlyErr(err))
-		a.logf("Speed test failed: %v", err)
-	} else {
-		fmt.Println()
-		fmt.Printf("  Write:  %.1f MB/s\n", result.WriteSpeed)
-		fmt.Printf("  Read:   %.1f MB/s\n", result.ReadSpeed)
-		a.logf("Speed test complete — write: %.1f MB/s, read: %.1f MB/s", result.WriteSpeed, result.ReadSpeed)
-		fmt.Println()
-	}
-
-	a.drainInput()
-	a.printPrompt()
 }

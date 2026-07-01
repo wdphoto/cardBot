@@ -16,7 +16,7 @@ Scope: the entire `cardBot` repository.
 
 - Current working branch for active work is `scratch` unless the user asks otherwise.
 - `main` is the default/release branch on GitHub.
-- `dev` exists as a legacy/integration branch.
+- `scratch` is the active work branch; `main` is the release/default branch.
 - Use short-lived fix/feature branches only when useful, then merge/fast-forward their commits back into the intended branch and delete the temporary branch.
 - Before edits, check `git status --short --branch`. After edits, leave the tree clean unless the user asked for uncommitted work.
 - Do not force-push, rewrite shared history, delete branches, delete tags, cut releases, or remove the old sandbox folder without explicit confirmation.
@@ -29,7 +29,8 @@ The built command is `cardbot`.
 
 ## Repo map
 
-- `main.go`, `boot.go`, `*_cmd.go`: CLI entry points and top-level commands.
+- `main.go`: small process entry point with version metadata.
+- `cmd/`: Cobra/Viper CLI entry points and top-level commands.
 - `app/`: interactive app state, display, command handling, setup, update flow.
 - `analyze/`: card content analysis and metadata summaries.
 - `cardcopy/`: copy operations, filters, naming, progress/throughput, disk-space checks.
@@ -39,7 +40,7 @@ The built command is `cardbot`.
 - `pick/`: folder picking helpers.
 - `term/`: terminal formatting and ANSI helpers.
 - `update/`: self-update/release lookup behavior. Default repo should remain `wdphoto/cardBot`.
-- `cblog/`, `dotfile/`, `fsutil/`, `speedtest/`: support packages.
+- `cblog/`, `dotfile/`, `fsutil/`: support packages.
 - `scripts/`: install, uninstall, and QA scripts.
 - `.github/workflows/`: CI/release automation.
 

@@ -154,8 +154,8 @@ func (a *App) Printf(format string, args ...any) {
 }
 
 // drainInput discards any buffered input keystrokes.
-// Called after blocking operations (copy, speed test) to prevent
-// queued commands from firing on the next prompt.
+// Called after blocking operations to prevent queued commands from firing on
+// the next prompt.
 func (a *App) drainInput() {
 	for {
 		select {

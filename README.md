@@ -2,7 +2,7 @@
 
 A CLI tool for camera memory cards.
 
-![cardBot screenshot](screenshot.png) 
+![cardBot screenshot](screenshot.png)
 
 ## DISCLAIMER - Built with AI
 
@@ -11,7 +11,7 @@ cardBot was built with the assistance of AI coding tools. This project is an exp
 ## What cardBot does
 
 - Detects camera memory cards on macOS
-- Generates an overview of card content (file count, type, dates, equipment data, etc.) 
+- Generates an overview of card content (file count, type, dates, equipment data, etc.)
 - Copy modes: all, selects (starred), photos only, videos only, etc
 - Rename files during copy operations
 - Tracks card copy status
@@ -20,17 +20,17 @@ cardBot was built with the assistance of AI coding tools. This project is an exp
 
 | Platform | Status | Notes |
 |----------|--------|-------|
-| macOS | Uh huh | WIP |
-| Linux | I heard it works | Untested |
+| macOS | Primary | Release builds use the no-cgo polling detector |
+| Linux | Best effort | Untested |
 | Windows | Ugh | Someday, Maybe |
 
 Recommended minimum: macOS 10.13 High Sierra (according to the clankers)
 
 ## cardBot's Codebase
 
-- **~7 MB** installed binary (single static executable, no dependencies)
-- **~8,200** lines of Go source across 17 packages
-- **~7,800** lines of tests — roughly 1:1 coverage ratio
+- **~7 MB** installed binary (single executable, no runtime dependencies)
+- **~8,500** lines of Go source across 16 packages
+- **~8,100** lines of tests
 
 ## Installation
 
@@ -91,8 +91,9 @@ cardbot --setup
 |---------|-------|--------|
 | **0.0.7** | Code Refactor | Complete |
 | **0.0.8** | Card copy operations | Complete |
-| **0.0.10** | Release/copy correctness pass | In progress |
-| **0.0.11** | Copyright check and injection | Planned |
+| **0.0.10** | Release/copy correctness pass | Complete |
+| **0.0.11** | Docs, release workflow, and performance profiling | Planned |
+| **0.0.12** | Copyright check and injection | Planned |
 
 See [`TODO.md`](TODO.md) for the current technical backlog and discussion items.
 

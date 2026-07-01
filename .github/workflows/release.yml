@@ -41,7 +41,18 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
         run: |
-          go build -ldflags="-s -w" -o cardbot-${{ matrix.suffix }} .
+          VERSION="${GITHUB_REF_NAME#v}"
+          COMMIT="${GITHUB_SHA::7}"
+          DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          go build -ldflags="-s -w \
+            -X 'main.version=${VERSION}' \
+            -X 'main.commit=${COMMIT}' \
+            -X 'main.date=${DATE}'" \
+            -o cardbot-${{ matrix.suffix }} .
+
+      - name: Smoke version
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        run: ./cardbot-${{ matrix.suffix }} --version
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

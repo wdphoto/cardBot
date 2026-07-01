@@ -12,7 +12,7 @@ Specific version:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wdphoto/cardBot/main/scripts/install.sh | sh -s -- --version <version>
-# example: --version v0.7.3
+# example: --version v0.0.10
 ```
 
 Install to custom path without sudo:
@@ -102,7 +102,7 @@ go build -o cardbot .
 ./cardbot --version
 ```
 
-### macOS with Xcode CLI tools (native detection path)
+### macOS with Xcode CLI tools (local native detection path)
 
 ```bash
 xcode-select --install
@@ -114,6 +114,8 @@ go build -o cardbot .
 ```bash
 CGO_ENABLED=0 go build -o cardbot .
 ```
+
+Release artifacts are currently built with `CGO_ENABLED=0`, so macOS releases use the polling detector backend.
 
 ---
 

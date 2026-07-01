@@ -1,14 +1,12 @@
 # cardBot TODO
 
-This is the tracked project backlog for things to revisit, rethink, or discuss. It is intentionally short; detailed rationale lives in [`codex-review-rnd-2.md`](codex-review-rnd-2.md).
+This is the tracked project backlog for things to revisit, rethink, or discuss. Keep it short and move detailed design notes into focused docs only when they are still current.
 
 ## Before the next serious release
 
-- [ ] Merge or cherry-pick the fixed module path from `scratch` to `main` so the public branch uses `github.com/wdphoto/cardBot`.
-- [ ] Fix release builds to stamp `version`, `commit`, and `date` with ldflags.
 - [ ] Decide whether macOS release artifacts should use native DiskArbitration/cgo or the polling no-cgo detector, then document/build accordingly.
-- [ ] Resolve the dead `speedtest` surface: wire it intentionally, move it to a diagnostic path, or delete it.
-- [ ] Add CI checks for `go vet`, `staticcheck`, shell syntax, and vulnerability scanning.
+- [ ] Add CI checks for `staticcheck` and vulnerability scanning.
+- [ ] Add a benchmark/profile pass for card analysis and copy planning on a representative card dump.
 
 ## Copy correctness / data safety
 
@@ -34,7 +32,6 @@ This is the tracked project backlog for things to revisit, rethink, or discuss. 
 
 ## Docs / decisions to discuss
 
-- [ ] Decide whether `scratch` is temporary or the real integration branch.
 - [ ] Decide whether the LaunchAgent label should remain `com.illwill.cardbot` for stability.
 - [ ] Keep ignored `agent/` notes as scratchpad only; promote still-valid ideas into this file or tracked docs.
 - [ ] Keep README user-focused and push implementation notes into `NOTES.md`, `TODO.md`, or code comments.

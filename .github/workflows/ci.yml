@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, scratch]
   pull_request:
-    branches: [main, master]
+    branches: [main, scratch]
 
 jobs:
   test:
@@ -19,6 +19,12 @@ jobs:
 
       - name: Run tests
         run: go test -race ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Check shell scripts
+        run: bash -n scripts/*.sh
 
       - name: Build (smoke test)
         run: go build -o cardbot .
