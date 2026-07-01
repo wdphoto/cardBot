@@ -82,7 +82,7 @@ func TestRootCommand_UnknownCommand(t *testing.T) {
 }
 
 func executeTestRoot(args ...string) error {
-	cmd := NewRootCommand(BuildInfo{Version: "0.9.0", Commit: "none", Date: "unknown"})
+	cmd := NewRootCommand(BuildInfo{Version: "0.0.10", Commit: "none", Date: "unknown"})
 	cmd.SetArgs(args)
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)

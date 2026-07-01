@@ -11,7 +11,7 @@ func TestParseChangelogSection(t *testing.T) {
 
 	raw := `# cardBot Changelog
 
-## 0.9.0
+## 0.0.10
 
 - Feature A
 - Feature B
@@ -32,7 +32,7 @@ func TestParseChangelogSection(t *testing.T) {
 		version string
 		want    []string
 	}{
-		{"current version", "0.9.0", []string{"Feature A", "Feature B"}},
+		{"current version", "0.0.10", []string{"Feature A", "Feature B"}},
 		{"middle version", "0.8.0", []string{"Gear display", "Copy today/yesterday", "Timestamp cleanup"}},
 		{"oldest version", "0.7.0", []string{"Structural refactor"}},
 		{"unknown version", "0.6.0", nil},

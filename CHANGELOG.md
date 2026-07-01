@@ -1,6 +1,6 @@
 # cardBot Changelog
 
-## 0.9.0
+## 0.0.10
 
 - Fix cardBot naming conventions
 - Fix Go naming conventions

@@ -167,7 +167,7 @@ func TestReadRecentLauncherExecLines_FallsBackToOldLog(t *testing.T) {
 func TestCollectDaemonStatusReport_AppliesEnvOverrides(t *testing.T) {
 	t.Setenv("CARDBOT_DESTINATION", "/tmp/cardbot-env")
 
-	report := collectDaemonStatusReport(daemonStatusOptions{}, "0.9.0")
+	report := collectDaemonStatusReport(daemonStatusOptions{}, "0.0.10")
 	if report.Daemon.WorkingDirectory != "/tmp/cardbot-env" {
 		t.Fatalf("WorkingDirectory = %q, want %q", report.Daemon.WorkingDirectory, "/tmp/cardbot-env")
 	}
