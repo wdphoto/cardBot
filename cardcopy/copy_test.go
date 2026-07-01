@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -415,6 +416,75 @@ func TestCopy_SkipsExistingWithCorrectSize(t *testing.T) {
 	}
 	if string(got) != string(tampered) {
 		t.Error("file should have been skipped (not re-copied) since size matched")
+	}
+}
+
+func TestCopy_VerifyFull_ReplacesSameSizeTamperedFile(t *testing.T) {
+	t.Parallel()
+	data := []byte("original content here")
+	card := createTestCard(t, map[string]testFileSpec{
+		"100NIKON/DSC_0001.NEF": {data: data, mtime: date(2026, 3, 8)},
+	})
+	dest := t.TempDir()
+
+	if _, err := Run(context.Background(), Options{CardPath: card, DestBase: dest}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	destFile := filepath.Join(dest, "2026-03-08", "100NIKON", "DSC_0001.NEF")
+	tampered := []byte("XXXXXXXXXXXXXXXXXXXXX")
+	if len(tampered) != len(data) {
+		t.Fatalf("test tampered data length = %d, want %d", len(tampered), len(data))
+	}
+	if err := os.WriteFile(destFile, tampered, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := Run(context.Background(), Options{
+		CardPath:   card,
+		DestBase:   dest,
+		VerifyMode: "full",
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.FilesCopied != 1 {
+		t.Fatalf("FilesCopied = %d, want 1", result.FilesCopied)
+	}
+	if result.FilesSkipped != 0 {
+		t.Fatalf("FilesSkipped = %d, want 0", result.FilesSkipped)
+	}
+
+	got, err := os.ReadFile(destFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(data) {
+		t.Fatalf("destination content = %q, want original source content", got)
+	}
+}
+
+func TestPlanCopy_DetectsDuplicateDestinationPath(t *testing.T) {
+	t.Parallel()
+	card := createTestCard(t, map[string]testFileSpec{
+		"100NIKON/A.NEF": {data: []byte("a"), mtime: date(2026, 3, 8)},
+		"A.NEF":          {data: []byte("b"), mtime: date(2026, 3, 8)},
+	})
+	dest := t.TempDir()
+
+	_, err := PlanCopy(context.Background(), Options{
+		CardPath: card,
+		DestBase: dest,
+		FileDates: map[string]string{
+			"100NIKON/A.NEF": "2026-03-08",
+			"A.NEF":          filepath.Join("2026-03-08", "100NIKON"),
+		},
+	})
+	if err == nil {
+		t.Fatal("PlanCopy() error = nil, want duplicate destination error")
+	}
+	if !strings.Contains(err.Error(), "duplicate destination path") {
+		t.Fatalf("PlanCopy() error = %q, want duplicate destination path", err)
 	}
 }
 

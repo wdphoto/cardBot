@@ -59,6 +59,29 @@ type Options struct {
 	VerifyMode    string                                // "size" (default) or "full" (byte-level read-back)
 }
 
+// Plan describes the copy work to be performed after walking the card and
+// resolving destination paths. It is safe to inspect without writing files.
+type Plan struct {
+	Options       Options
+	Files         []PlannedFile
+	TotalBytes    int64
+	BytesRequired int64
+	Warnings      []string
+	VerifyMethod  string
+}
+
+// PlannedFile is one source file and its resolved destination.
+type PlannedFile struct {
+	SourcePath    string
+	SourceRelPath string
+	DestRelPath   string
+	DestPath      string
+	Size          int64
+	Date          string
+	CaptureTime   time.Time
+	Skip          bool
+}
+
 // fileEntry holds a file to be copied.
 type fileEntry struct {
 	srcPath     string // absolute source path on card
@@ -72,6 +95,16 @@ type fileEntry struct {
 // ctx may be cancelled to abort mid-copy; a partial *Result is always returned
 // alongside any error so the caller knows how many files completed.
 func Run(ctx context.Context, opts Options, onProgress ProgressFunc) (*Result, error) {
+	plan, err := PlanCopy(ctx, opts)
+	if err != nil {
+		return &Result{DestPath: strings.TrimSpace(opts.DestBase)}, err
+	}
+	return Execute(ctx, plan, onProgress)
+}
+
+// PlanCopy walks the card, applies filters and naming rules, and resolves every
+// destination path before any file is written.
+func PlanCopy(ctx context.Context, opts Options) (*Plan, error) {
 	if opts.BufferKB <= 0 {
 		opts.BufferKB = 256
 	}
@@ -100,6 +133,12 @@ func Run(ctx context.Context, opts Options, onProgress ProgressFunc) (*Result, e
 	var walkWarnings []string
 
 	err = filepath.WalkDir(dcim, func(path string, d os.DirEntry, err error) error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		if err != nil {
 			// Log permission/IO errors but keep walking.
 			// Broken symlinks and not-exist are silently skipped.
@@ -163,11 +202,10 @@ func Run(ctx context.Context, opts Options, onProgress ProgressFunc) (*Result, e
 		return nil
 	})
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, fmt.Errorf("walking DCIM: %w", err)
-	}
-
-	if len(files) == 0 {
-		return &Result{DestPath: opts.DestBase}, nil
 	}
 
 	// Sort files by capture time for chronological sequence numbering.
@@ -175,43 +213,99 @@ func Run(ctx context.Context, opts Options, onProgress ProgressFunc) (*Result, e
 	// even if files are scattered across multiple DCIM subfolders.
 	sortFilesByCaptureTime(files)
 
+	fullVerify := opts.VerifyMode == "full"
+	verifyMethod := "size"
+	if fullVerify {
+		verifyMethod = "full"
+	}
+
+	plan := &Plan{
+		Options:      opts,
+		Files:        make([]PlannedFile, 0, len(files)),
+		TotalBytes:   totalBytes,
+		Warnings:     walkWarnings,
+		VerifyMethod: verifyMethod,
+	}
+	if len(files) == 0 {
+		return plan, nil
+	}
+
 	// Compute rename mappings for progress reporting and dry-run preview.
 	namingMode := isTimestampMode(opts.NamingMode)
+	if namingMode && len(files) > sequenceMax {
+		return nil, fmt.Errorf("timestamp naming supports at most %d files per copy; got %d", sequenceMax, len(files))
+	}
 	seq := 1
 
 	// Pre-compute all destination paths for dry-run and progress reporting.
-	destPaths := make([]string, len(files))
+	seenDest := make(map[string]string, len(files))
 	for i := range files {
 		f := &files[i]
 		destRelPath := f.relPath
 		if namingMode {
 			destRelPath = renamedRelativePath(f.relPath, f.captureTime, seq, SequenceDigits)
 			seq++
-			if seq > sequenceMax {
-				seq = 1 // Loop back to 0001 after 9999
+		}
+		destPath, err := safeDestPath(opts.DestBase, f.date, destRelPath)
+		if err != nil {
+			return nil, err
+		}
+		if other, ok := seenDest[destPath]; ok {
+			return nil, fmt.Errorf("duplicate destination path %s for %s and %s", destPath, other, f.relPath)
+		}
+		seenDest[destPath] = f.relPath
+
+		planned := PlannedFile{
+			SourcePath:    f.srcPath,
+			SourceRelPath: f.relPath,
+			DestRelPath:   destRelPath,
+			DestPath:      destPath,
+			Size:          f.size,
+			Date:          f.date,
+			CaptureTime:   f.captureTime,
+		}
+		if !opts.DryRun {
+			planned.Skip = shouldSkipExisting(planned, fullVerify, opts.BufferKB)
+			if !planned.Skip {
+				plan.BytesRequired += f.size
 			}
 		}
-		destPaths[i] = destRelPath
+		plan.Files = append(plan.Files, planned)
+	}
+
+	return plan, nil
+}
+
+// Execute performs a previously planned copy.
+func Execute(ctx context.Context, plan *Plan, onProgress ProgressFunc) (*Result, error) {
+	if plan == nil {
+		return nil, fmt.Errorf("copy plan is required")
+	}
+	opts := plan.Options
+	if len(plan.Files) == 0 {
+		return &Result{DestPath: opts.DestBase, Warnings: plan.Warnings, VerifyMethod: plan.VerifyMethod}, nil
 	}
 
 	if opts.DryRun {
 		// Report all mappings via progress callback for dry-run preview.
 		if onProgress != nil {
-			for i, f := range files {
+			for i, f := range plan.Files {
 				onProgress(Progress{
 					FilesDone:   i,
-					FilesTotal:  len(files),
+					FilesTotal:  len(plan.Files),
 					BytesDone:   0,
-					BytesTotal:  totalBytes,
-					CurrentFile: destPaths[i],
-					SourceFile:  f.relPath, // For dry-run rename preview
+					BytesTotal:  plan.TotalBytes,
+					CurrentFile: f.DestRelPath,
+					SourceFile:  f.SourceRelPath,
 				})
 			}
 		}
 		return &Result{
-			FilesCopied: len(files),
-			BytesCopied: totalBytes,
-			DestPath:    opts.DestBase,
+			FilesCopied:  len(plan.Files),
+			BytesCopied:  plan.TotalBytes,
+			DestPath:     opts.DestBase,
+			Warnings:     plan.Warnings,
+			VerifyMethod: plan.VerifyMethod,
 		}, nil
 	}
 
@@ -234,13 +328,9 @@ func Run(ctx context.Context, opts Options, onProgress ProgressFunc) (*Result, e
 	// If we can query free space and it's clearly insufficient, fail fast.
 	// Only count files that will actually be written; existing same-size files
 	// are skipped during copy and do not require additional destination space.
-	bytesRequired, err := bytesRequiredForCopy(files, destPaths, opts.DestBase)
-	if err != nil {
-		return &Result{DestPath: opts.DestBase}, err
-	}
-	if free, ok := diskFreeBytes(opts.DestBase); ok && free < bytesRequired {
+	if free, ok := diskFreeBytes(opts.DestBase); ok && free < plan.BytesRequired {
 		return nil, fmt.Errorf("not enough space on destination: need %s, only %s free",
-			fsutil.FormatBytes(bytesRequired), fsutil.FormatBytes(free))
+			fsutil.FormatBytes(plan.BytesRequired), fsutil.FormatBytes(free))
 	}
 
 	// --- Phase 2: Copy ---
@@ -264,25 +354,19 @@ func Run(ctx context.Context, opts Options, onProgress ProgressFunc) (*Result, e
 	tracker := newThroughputTracker()
 	tracker.start(start, 0)
 
-	for i := range files {
+	for i := range plan.Files {
 		// Check for cancellation before each file.
 		select {
 		case <-ctx.Done():
-			return partialResult(filesDone, filesSkipped, bytesDone, bytesSkipped, start, opts.DestBase), ctx.Err()
+			return partialResult(filesDone, filesSkipped, bytesDone, bytesSkipped, start, opts.DestBase, verifyMethod), ctx.Err()
 		default:
 		}
 
-		f := &files[i]
-		destPath, err := safeDestPath(opts.DestBase, f.date, destPaths[i])
-		if err != nil {
-			return partialResult(filesDone, filesSkipped, bytesDone, bytesSkipped, start, opts.DestBase), err
-		}
-
-		// Check if destination already exists with correct size (skip).
-		if info, statErr := os.Stat(destPath); statErr == nil && info.Size() == f.size {
+		f := &plan.Files[i]
+		if f.Skip {
 			filesSkipped++
-			bytesSkipped += f.size
-			bytesDone += f.size
+			bytesSkipped += f.Size
+			bytesDone += f.Size
 			filesDone++
 			continue
 		}
@@ -293,32 +377,32 @@ func Run(ctx context.Context, opts Options, onProgress ProgressFunc) (*Result, e
 		if onProgress != nil {
 			now := time.Now()
 			bps := tracker.sample(now, bytesDone)
-			remaining := totalBytes - bytesDone
+			remaining := plan.TotalBytes - bytesDone
 			onProgress(Progress{
 				FilesDone:   filesDone,
-				FilesTotal:  len(files),
+				FilesTotal:  len(plan.Files),
 				BytesDone:   bytesDone,
-				BytesTotal:  totalBytes,
-				CurrentFile: destPaths[i],
+				BytesTotal:  plan.TotalBytes,
+				CurrentFile: f.DestRelPath,
 				SmoothedBPS: bps,
 				ETASeconds:  tracker.eta(remaining),
 			})
 		}
 
-		if err := copyFileCtx(ctx, destPath, f.srcPath, f.size, buf, madeDir, &fileByteCounter); err != nil {
-			return partialResult(filesDone, filesSkipped, bytesDone, bytesSkipped, start, opts.DestBase),
-				fmt.Errorf("copying %s: %w", f.relPath, err)
+		if err := copyFileCtx(ctx, f.DestPath, f.SourcePath, f.Size, buf, madeDir, &fileByteCounter); err != nil {
+			return partialResult(filesDone, filesSkipped, bytesDone, bytesSkipped, start, opts.DestBase, verifyMethod),
+				fmt.Errorf("copying %s: %w", f.SourceRelPath, err)
 		}
 
 		// Full verification: read back and compare bytes against source.
 		if fullVerify {
-			if err := verifyBytes(f.srcPath, destPath, buf); err != nil {
-				return partialResult(filesDone, filesSkipped, bytesDone, bytesSkipped, start, opts.DestBase),
-					fmt.Errorf("verification failed for %s: %w", f.relPath, err)
+			if err := verifyBytes(f.SourcePath, f.DestPath, buf); err != nil {
+				return partialResult(filesDone, filesSkipped, bytesDone, bytesSkipped, start, opts.DestBase, verifyMethod),
+					fmt.Errorf("verification failed for %s: %w", f.SourceRelPath, err)
 			}
 		}
 
-		bytesDone += f.size
+		bytesDone += f.Size
 		filesDone++
 	}
 
@@ -328,9 +412,9 @@ func Run(ctx context.Context, opts Options, onProgress ProgressFunc) (*Result, e
 		bps := tracker.sample(now, bytesDone)
 		onProgress(Progress{
 			FilesDone:   filesDone,
-			FilesTotal:  len(files),
+			FilesTotal:  len(plan.Files),
 			BytesDone:   bytesDone,
-			BytesTotal:  totalBytes,
+			BytesTotal:  plan.TotalBytes,
 			SmoothedBPS: bps,
 			ETASeconds:  -1, // copy is done
 		})
@@ -343,7 +427,7 @@ func Run(ctx context.Context, opts Options, onProgress ProgressFunc) (*Result, e
 		BytesSkipped: bytesSkipped,
 		Elapsed:      time.Since(start),
 		DestPath:     opts.DestBase,
-		Warnings:     walkWarnings,
+		Warnings:     plan.Warnings,
 		VerifyMethod: verifyMethod,
 	}, nil
 }
@@ -417,23 +501,8 @@ func safeDestPath(destBase, date, relPath string) (string, error) {
 	return destPath, nil
 }
 
-func bytesRequiredForCopy(files []fileEntry, destPaths []string, destBase string) (int64, error) {
-	var required int64
-	for i := range files {
-		destPath, err := safeDestPath(destBase, files[i].date, destPaths[i])
-		if err != nil {
-			return 0, err
-		}
-		if info, err := os.Stat(destPath); err == nil && info.Size() == files[i].size {
-			continue
-		}
-		required += files[i].size
-	}
-	return required, nil
-}
-
 // partialResult builds a Result from in-progress counters.
-func partialResult(files, skipped int, bytes, bytesSkipped int64, start time.Time, dest string) *Result {
+func partialResult(files, skipped int, bytes, bytesSkipped int64, start time.Time, dest, verifyMethod string) *Result {
 	return &Result{
 		FilesCopied:  files - skipped,
 		FilesSkipped: skipped,
@@ -441,7 +510,20 @@ func partialResult(files, skipped int, bytes, bytesSkipped int64, start time.Tim
 		BytesSkipped: bytesSkipped,
 		Elapsed:      time.Since(start),
 		DestPath:     dest,
+		VerifyMethod: verifyMethod,
 	}
+}
+
+func shouldSkipExisting(f PlannedFile, fullVerify bool, bufferKB int) bool {
+	info, err := os.Stat(f.DestPath)
+	if err != nil || info.Size() != f.Size {
+		return false
+	}
+	if !fullVerify {
+		return true
+	}
+	buf := make([]byte, bufferKB*1024)
+	return verifyBytes(f.SourcePath, f.DestPath, buf) == nil
 }
 
 // copyFileCtx copies a single file with size verification, atomic rename,

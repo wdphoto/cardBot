@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -206,7 +207,7 @@ func TestCopy_TimestampNaming_AlwaysUses4Digits(t *testing.T) {
 		CardPath:   card,
 		DestBase:   dest,
 		NamingMode: "timestamp",
-		FileDates:     map[string]string{"100NIKON/DSC_0001.NEF": "2026-03-14"},
+		FileDates:  map[string]string{"100NIKON/DSC_0001.NEF": "2026-03-14"},
 		FileDateTimes: map[string]time.Time{
 			"100NIKON/DSC_0001.NEF": ts,
 		},
@@ -217,6 +218,30 @@ func TestCopy_TimestampNaming_AlwaysUses4Digits(t *testing.T) {
 
 	// Fixed 4-digit
 	assertFileSize(t, filepath.Join(dest, "2026-03-14", "100NIKON", "260314T143052_0001.NEF"), 1)
+}
+
+func TestPlanCopy_TimestampNamingRejectsSequenceOverflow(t *testing.T) {
+	files := make(map[string]testFileSpec, sequenceMax+1)
+	for i := 0; i <= sequenceMax; i++ {
+		files[fmt.Sprintf("100NIKON/DSC_%05d.NEF", i)] = testFileSpec{
+			data:  []byte("x"),
+			mtime: date(2026, 3, 8),
+		}
+	}
+	card := createTestCard(t, files)
+	dest := t.TempDir()
+
+	_, err := PlanCopy(context.Background(), Options{
+		CardPath:   card,
+		DestBase:   dest,
+		NamingMode: "timestamp",
+	})
+	if err == nil {
+		t.Fatal("PlanCopy() error = nil, want sequence overflow error")
+	}
+	if !strings.Contains(err.Error(), "timestamp naming supports at most") {
+		t.Fatalf("PlanCopy() error = %q, want timestamp overflow error", err)
+	}
 }
 
 func TestSortFilesByCaptureTime(t *testing.T) {
@@ -276,7 +301,7 @@ func TestCopy_OriginalNaming_Unchanged(t *testing.T) {
 		CardPath:   card,
 		DestBase:   dest,
 		NamingMode: "original",
-		FileDates:     map[string]string{"100NIKON/DSC_0001.NEF": "2026-03-08"},
+		FileDates:  map[string]string{"100NIKON/DSC_0001.NEF": "2026-03-08"},
 		FileDateTimes: map[string]time.Time{
 			"100NIKON/DSC_0001.NEF": date(2026, 3, 8),
 		},

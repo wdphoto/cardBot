@@ -12,11 +12,11 @@ This is the tracked project backlog for things to revisit, rethink, or discuss. 
 
 ## Copy correctness / data safety
 
-- [ ] Add a copy planning phase before execution.
-- [ ] Detect duplicate destination paths before copying anything.
-- [ ] Fix timestamp sequence overflow; never silently wrap after `9999`.
-- [ ] Define and implement true `verify_mode=full` behavior for skipped existing files.
-- [ ] Add tests for destination collisions, sequence overflow, and same-size/different-content existing files.
+- [x] Add a copy planning phase before execution.
+- [x] Detect duplicate destination paths before copying anything.
+- [x] Fix timestamp sequence overflow; never silently wrap after `9999`.
+- [x] Define and implement true `verify_mode=full` behavior for skipped existing files.
+- [x] Add tests for destination collisions, sequence overflow, and same-size/different-content existing files.
 
 ## Photo workflow design
 
@@ -28,7 +28,7 @@ This is the tracked project backlog for things to revisit, rethink, or discuss. 
 ## Architecture cleanup
 
 - [ ] Simplify the nested copy/event loop into worker messages handled by one app loop.
-- [ ] Split large multi-phase functions when touched: `runInteractive`, `copyFiltered`, `cardcopy.Run`, and `analyze.Analyze`.
+- [ ] Split large multi-phase functions when touched: `copyFiltered` and `analyze.Analyze`.
 - [ ] Clarify detector lifecycle: make detectors one-shot or properly restartable.
 - [ ] Consider raw single-key input later; do not let it complicate copy correctness work.
 

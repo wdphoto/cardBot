@@ -1,24 +1,23 @@
-package main
+package cmd
 
 import (
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
-func TestRunNoArgSubcommand_RejectsExtraArgs(t *testing.T) {
+func TestNoArgSubcommand_RejectsExtraArgs(t *testing.T) {
 	t.Parallel()
 
-	runCalled := false
-	code := runNoArgSubcommand("install-daemon", []string{"extra"}, func() int {
-		runCalled = true
-		return 0
-	})
-	if code != 2 {
-		t.Fatalf("runNoArgSubcommand() code = %d, want 2", code)
+	err := executeTestRoot("install-daemon", "extra")
+	var cmdErr commandError
+	if !errors.As(err, &cmdErr) {
+		t.Fatalf("Execute() error = %T, want commandError", err)
 	}
-	if runCalled {
-		t.Fatal("runNoArgSubcommand() executed callback with extra args")
+	if cmdErr.code != 2 {
+		t.Fatalf("command error code = %d, want 2", cmdErr.code)
 	}
 }
 
@@ -69,26 +68,23 @@ func TestLooksLikeCommandToken_ExistingRelativePath(t *testing.T) {
 	}
 }
 
-func TestTryRunSubcommand_UnknownCommand(t *testing.T) {
+func TestRootCommand_UnknownCommand(t *testing.T) {
 	t.Parallel()
 
-	handled, code := tryRunSubcommand([]string{"daemon-statuz"})
-	if !handled {
-		t.Fatal("handled = false, want true")
+	err := executeTestRoot("daemon-statuz")
+	var cmdErr commandError
+	if !errors.As(err, &cmdErr) {
+		t.Fatalf("Execute() error = %T, want commandError", err)
 	}
-	if code != 2 {
-		t.Fatalf("code = %d, want 2", code)
+	if cmdErr.code != 2 {
+		t.Fatalf("command error code = %d, want 2", cmdErr.code)
 	}
 }
 
-func TestTryRunSubcommand_PathArgumentFallsThrough(t *testing.T) {
-	t.Parallel()
-
-	handled, code := tryRunSubcommand([]string{"/Volumes/NIKON"})
-	if handled {
-		t.Fatal("handled = true, want false")
-	}
-	if code != 0 {
-		t.Fatalf("code = %d, want 0", code)
-	}
+func executeTestRoot(args ...string) error {
+	cmd := NewRootCommand(BuildInfo{Version: "0.9.0", Commit: "none", Date: "unknown"})
+	cmd.SetArgs(args)
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	return cmd.Execute()
 }

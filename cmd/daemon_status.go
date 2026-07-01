@@ -1,4 +1,4 @@
-package main
+package cmd
 
 import (
 	"bufio"
@@ -77,8 +77,11 @@ func runDaemonStatusCommand(args []string) int {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return 2
 	}
+	return runDaemonStatus(opts, "")
+}
 
-	report := collectDaemonStatusReport(opts)
+func runDaemonStatus(opts daemonStatusOptions, version string) int {
+	report := collectDaemonStatusReport(opts, version)
 	if opts.JSON {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -110,7 +113,7 @@ func parseDaemonStatusOptions(args []string) (daemonStatusOptions, error) {
 	return daemonStatusOptions{JSON: *jsonOut, RecentLaunches: *recentLaunches}, nil
 }
 
-func collectDaemonStatusReport(opts daemonStatusOptions) daemonStatusReport {
+func collectDaemonStatusReport(opts daemonStatusOptions, version string) daemonStatusReport {
 	processName := "cardbot"
 	if exe, err := os.Executable(); err == nil {
 		processName = filepath.Base(exe)
