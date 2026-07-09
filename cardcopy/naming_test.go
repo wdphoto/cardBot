@@ -312,3 +312,65 @@ func TestCopy_OriginalNaming_Unchanged(t *testing.T) {
 
 	assertFileSize(t, filepath.Join(dest, "2026-03-08", "100NIKON", "DSC_0001.NEF"), 1)
 }
+
+func TestPlanCopy_TimestampNameStableAcrossFilters(t *testing.T) {
+	t.Parallel()
+	card := createTestCard(t, map[string]testFileSpec{
+		"100NIKON/DSC_0001.JPG": {data: []byte("photo"), mtime: date(2026, 3, 8)},
+		"100NIKON/DSC_0002.MOV": {data: []byte("video"), mtime: date(2026, 3, 9)},
+	})
+	ts1 := time.Date(2026, 3, 8, 10, 0, 0, 0, time.UTC)
+	ts2 := ts1.Add(time.Second)
+	base := Options{
+		CardPath:   card,
+		DestBase:   t.TempDir(),
+		DryRun:     true,
+		NamingMode: "timestamp",
+		FileDateTimes: map[string]time.Time{
+			"100NIKON/DSC_0001.JPG": ts1,
+			"100NIKON/DSC_0002.MOV": ts2,
+		},
+	}
+	all, err := PlanCopy(context.Background(), base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.Filter = func(_ string, ext string) bool { return ext == "MOV" }
+	videos, err := PlanCopy(context.Background(), base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(videos.Files) != 1 || len(all.Files) != 2 {
+		t.Fatalf("all files=%d video files=%d", len(all.Files), len(videos.Files))
+	}
+	if videos.Files[0].DestRelPath != all.Files[1].DestRelPath {
+		t.Fatalf("video name changed across filters: all=%q videos=%q", all.Files[1].DestRelPath, videos.Files[0].DestRelPath)
+	}
+}
+
+func TestCopy_TimestampNamingPreservesSidecarBasename(t *testing.T) {
+	t.Parallel()
+	card := createTestCard(t, map[string]testFileSpec{
+		"100NIKON/DSC_0001.NEF": {data: []byte("raw"), mtime: date(2026, 3, 8)},
+		"100NIKON/DSC_0001.XMP": {data: []byte("xmp"), mtime: date(2026, 3, 9)},
+	})
+	dest := t.TempDir()
+	ts := time.Date(2026, 3, 8, 12, 34, 56, 0, time.UTC)
+	_, err := Run(context.Background(), Options{
+		CardPath:   card,
+		DestBase:   dest,
+		NamingMode: "timestamp",
+		FileDates: map[string]string{
+			"100NIKON/DSC_0001.NEF": "2026-03-08",
+		},
+		FileDateTimes: map[string]time.Time{
+			"100NIKON/DSC_0001.NEF": ts,
+		},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := filepath.Join(dest, "2026-03-08", "100NIKON", "260308T123456_0001")
+	assertFileSize(t, base+".NEF", 3)
+	assertFileSize(t, base+".XMP", 3)
+}

@@ -267,9 +267,10 @@ func runInteractive(ctx context.Context, info BuildInfo, v *viper.Viper, flags *
 
 	var cfg *config.Config
 	var cfgWarnings []string
+	cfgStatus := config.LoadMissing
 
 	if cfgPath != "" {
-		cfg, cfgWarnings, err = config.Load(cfgPath)
+		cfg, cfgWarnings, cfgStatus, err = config.LoadWithStatus(cfgPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: %s — using defaults\n", term.FriendlyErr(err))
 			cfg = config.Defaults()
@@ -288,6 +289,10 @@ func runInteractive(ctx context.Context, info BuildInfo, v *viper.Viper, flags *
 		}
 	}
 	if needsSetup {
+		if cfgStatus == config.LoadMalformed || cfgStatus == config.LoadUnsupported {
+			fmt.Fprintf(os.Stderr, "Error: refusing to overwrite existing %s config at %s; move or repair it first\n", cfgStatus, cfgPath)
+			return 1
+		}
 		setupReader := bufio.NewReader(os.Stdin)
 		setupPrompter := app.NewSetupPrompter(setupReader, os.Stdout)
 		promptDestinationFn := func(defaultPath string) string {
@@ -295,6 +300,8 @@ func runInteractive(ctx context.Context, info BuildInfo, v *viper.Viper, flags *
 		}
 		if saveErr := app.RunSetup(cfg, cfgPath, promptDestinationFn, setupPrompter.PromptNamingMode); saveErr != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not save config: %s\n", term.FriendlyErr(saveErr))
+		} else if cfgPath != "" {
+			cfgStatus = config.LoadValid
 		}
 		syncDaemonAutoStartFromConfig(cfg)
 		fprintSetupSummary(os.Stdout, cfg)
@@ -395,8 +402,10 @@ func runInteractive(ctx context.Context, info BuildInfo, v *viper.Viper, flags *
 	if cfg.Meta.LastSeenVersion == "" {
 		// First install — record version silently.
 		cfg.Meta.LastSeenVersion = info.Version
-		if cfgPath != "" {
-			_ = config.Save(cfg, cfgPath)
+		if cfgPath != "" && cfgStatus == config.LoadValid {
+			if saveErr := config.Save(cfg, cfgPath); saveErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not record current version: %v\n", saveErr)
+			}
 		}
 	} else if cfg.Meta.LastSeenVersion != info.Version {
 		bullets := parseChangelogSection(info.Changelog, info.Version)
@@ -404,8 +413,10 @@ func runInteractive(ctx context.Context, info BuildInfo, v *viper.Viper, flags *
 			fprintChangelog(os.Stdout, bullets)
 		}
 		cfg.Meta.LastSeenVersion = info.Version
-		if cfgPath != "" {
-			_ = config.Save(cfg, cfgPath)
+		if cfgPath != "" && cfgStatus == config.LoadValid {
+			if saveErr := config.Save(cfg, cfgPath); saveErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not record current version: %v\n", saveErr)
+			}
 		}
 	}
 

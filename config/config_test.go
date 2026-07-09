@@ -113,6 +113,64 @@ func TestLoad_MissingFile(t *testing.T) {
 	}
 }
 
+func TestLoadWithStatus(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		content *string
+		want    LoadStatus
+	}{
+		{name: "missing", want: LoadMissing},
+		{name: "valid", content: ptrString(`{"$schema":"cardbot-config-v1"}`), want: LoadValid},
+		{name: "malformed", content: ptrString(`{broken`), want: LoadMalformed},
+		{name: "unsupported", content: ptrString(`{"$schema":"cardbot-config-v99"}`), want: LoadUnsupported},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.json")
+			if tt.content != nil {
+				if err := os.WriteFile(path, []byte(*tt.content), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, _, got, err := LoadWithStatus(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Fatalf("status = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func ptrString(s string) *string { return &s }
+
+func TestSave_IsAtomicAndRestrictsPermissions(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Save(Defaults(), path); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("permissions = %o, want 600", got)
+	}
+	matches, err := filepath.Glob(filepath.Join(filepath.Dir(path), ".config.json.tmp-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("temporary configs left behind: %v", matches)
+	}
+}
+
 func TestLoad_MalformedJSON(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "config.json")

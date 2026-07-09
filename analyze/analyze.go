@@ -44,6 +44,8 @@ var supportedExif = map[string]bool{
 	"HEIF": true,
 }
 
+var ratingSidecarExts = map[string]bool{"XMP": true}
+
 // IsPhoto returns true if the extension belongs to a known photo format.
 // Ext should be uppercase without the dot (e.g., "NEF").
 func IsPhoto(ext string) bool {
@@ -185,6 +187,7 @@ func (a *Analyzer) Analyze(ctx context.Context) (*Result, error) {
 	// --- Phase 1: Fast directory walk ---
 	var files []fileEntry
 	var warnings []string
+	ratingSidecars := make(map[string]string)
 	err := filepath.WalkDir(dcim, func(path string, d os.DirEntry, err error) error {
 		// Check for cancellation.
 		select {
@@ -222,6 +225,11 @@ func (a *Analyzer) Analyze(ctx context.Context) (*Result, error) {
 		}
 
 		ext := normalizeExt(filepath.Ext(d.Name()))
+		if ratingSidecarExts[ext] {
+			rel, _ := filepath.Rel(dcim, path)
+			ratingSidecars[mediaStem(rel)] = path
+			return nil
+		}
 		if ext == "" || (!photoExts[ext] && !videoExts[ext]) {
 			return nil
 		}
@@ -343,10 +351,19 @@ loop:
 					lensSet[r.lens] = true
 				}
 				if r.rating > 0 {
-					starred++
 					fileRatings[f.relPath] = r.rating
 				}
 			}
+		}
+		if fileRatings[f.relPath] == 0 {
+			if sidecarPath := ratingSidecars[mediaStem(f.relPath)]; sidecarPath != "" {
+				if rating := readXMPSidecarRating(sidecarPath); rating > 0 {
+					fileRatings[f.relPath] = rating
+				}
+			}
+		}
+		if fileRatings[f.relPath] > 0 {
+			starred++
 		}
 
 		fileDates[f.relPath] = date
@@ -438,6 +455,7 @@ func readExif(path string, xmpBuf []byte) (date time.Time, body string, lens str
 
 // xmpRatingPrefix is the byte sequence before the rating digit in XMP.
 var xmpRatingPrefix = []byte("<xmp:Rating>")
+var xmpRatingAttributePrefixes = [][]byte{[]byte(`xmp:Rating="`), []byte("xmp:Rating='")}
 
 // scanXMPRating searches a byte slice for an embedded XMP rating.
 // The Nikon Z9 (and others) store star ratings in XMP embedded in the file,
@@ -445,18 +463,38 @@ var xmpRatingPrefix = []byte("<xmp:Rating>")
 // Returns 0 if no rating found or rating is 0.
 func scanXMPRating(buf []byte) int {
 	idx := bytes.Index(buf, xmpRatingPrefix)
-	if idx < 0 {
-		return 0
+	if idx >= 0 {
+		pos := idx + len(xmpRatingPrefix)
+		if pos < len(buf) && buf[pos] >= '1' && buf[pos] <= '5' {
+			return int(buf[pos] - '0')
+		}
 	}
-	pos := idx + len(xmpRatingPrefix)
-	if pos >= len(buf) {
-		return 0
-	}
-	ch := buf[pos]
-	if ch >= '1' && ch <= '5' {
-		return int(ch - '0')
+	for _, prefix := range xmpRatingAttributePrefixes {
+		idx = bytes.Index(buf, prefix)
+		if idx < 0 {
+			continue
+		}
+		pos := idx + len(prefix)
+		if pos < len(buf) && buf[pos] >= '1' && buf[pos] <= '5' {
+			return int(buf[pos] - '0')
+		}
 	}
 	return 0
+}
+
+func readXMPSidecarRating(path string) int {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+	buf := make([]byte, xmpBufSize)
+	n, _ := io.ReadFull(f, buf)
+	return scanXMPRating(buf[:n])
+}
+
+func mediaStem(relPath string) string {
+	return strings.ToLower(strings.TrimSuffix(filepath.Clean(relPath), filepath.Ext(relPath)))
 }
 
 // dateAccumulator collects stats while walking.

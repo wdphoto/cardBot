@@ -419,7 +419,7 @@ func TestCopy_SkipsExistingWithCorrectSize(t *testing.T) {
 	}
 }
 
-func TestCopy_VerifyFull_ReplacesSameSizeTamperedFile(t *testing.T) {
+func TestCopy_VerifyFull_RejectsSameSizeTamperedFile(t *testing.T) {
 	t.Parallel()
 	data := []byte("original content here")
 	card := createTestCard(t, map[string]testFileSpec{
@@ -440,27 +440,79 @@ func TestCopy_VerifyFull_ReplacesSameSizeTamperedFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := Run(context.Background(), Options{
+	_, err := Run(context.Background(), Options{
 		CardPath:   card,
 		DestBase:   dest,
 		VerifyMode: "full",
 	}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.FilesCopied != 1 {
-		t.Fatalf("FilesCopied = %d, want 1", result.FilesCopied)
-	}
-	if result.FilesSkipped != 0 {
-		t.Fatalf("FilesSkipped = %d, want 0", result.FilesSkipped)
+	if !errors.Is(err, ErrDestinationConflict) {
+		t.Fatalf("Run() error = %v, want ErrDestinationConflict", err)
 	}
 
 	got, err := os.ReadFile(destFile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != string(data) {
-		t.Fatalf("destination content = %q, want original source content", got)
+	if string(got) != string(tampered) {
+		t.Fatalf("destination content = %q, want preserved conflicting content", got)
+	}
+}
+
+func TestCopy_RejectsDifferentSizeDestinationConflict(t *testing.T) {
+	t.Parallel()
+	card := createTestCard(t, map[string]testFileSpec{
+		"100NIKON/DSC_0001.NEF": {data: []byte("source"), mtime: date(2026, 3, 8)},
+	})
+	dest := t.TempDir()
+	dst := filepath.Join(dest, "2026-03-08", "100NIKON", "DSC_0001.NEF")
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dst, []byte("unrelated destination"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Run(context.Background(), Options{CardPath: card, DestBase: dest}, nil)
+	if !errors.Is(err, ErrDestinationConflict) {
+		t.Fatalf("Run() error = %v, want ErrDestinationConflict", err)
+	}
+	got, readErr := os.ReadFile(dst)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(got) != "unrelated destination" {
+		t.Fatalf("conflicting destination was modified: %q", got)
+	}
+}
+
+func TestExecute_RejectsDestinationCreatedAfterPlanning(t *testing.T) {
+	t.Parallel()
+	card := createTestCard(t, map[string]testFileSpec{
+		"100NIKON/DSC_0001.NEF": {data: []byte("source"), mtime: date(2026, 3, 8)},
+	})
+	dest := t.TempDir()
+	plan, err := PlanCopy(context.Background(), Options{CardPath: card, DestBase: dest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dst := plan.Files[0].DestPath
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dst, []byte("raced"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = Execute(context.Background(), plan, nil)
+	if !errors.Is(err, ErrDestinationConflict) {
+		t.Fatalf("Execute() error = %v, want ErrDestinationConflict", err)
+	}
+	got, readErr := os.ReadFile(dst)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(got) != "raced" {
+		t.Fatalf("raced destination was modified: %q", got)
 	}
 }
 

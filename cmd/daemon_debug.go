@@ -30,13 +30,17 @@ func runDaemonDebugCommand(args []string) int {
 		return 1
 	}
 
-	cfg, _, err := config.Load(cfgPath)
+	cfg, _, status, err := config.LoadWithStatus(cfgPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: could not load config: %v\n", err)
 		return 1
 	}
 	if cfg == nil {
 		cfg = config.Defaults()
+	}
+	if (mode == daemonDebugOn || mode == daemonDebugOff) && (status == config.LoadMalformed || status == config.LoadUnsupported) {
+		fmt.Fprintf(os.Stderr, "Error: refusing to overwrite existing %s config at %s\n", status, cfgPath)
+		return 1
 	}
 
 	switch mode {

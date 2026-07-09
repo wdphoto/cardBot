@@ -10,6 +10,16 @@ import (
 
 const schemaVersion = "cardbot-config-v1"
 
+// LoadStatus describes whether a configuration file can be safely updated.
+type LoadStatus string
+
+const (
+	LoadMissing     LoadStatus = "missing"
+	LoadValid       LoadStatus = "valid"
+	LoadMalformed   LoadStatus = "malformed"
+	LoadUnsupported LoadStatus = "unsupported-schema"
+)
+
 const (
 	NamingOriginal  = "original"
 	NamingTimestamp = "timestamp"
@@ -110,15 +120,23 @@ func Path() (string, error) {
 // Load reads the config file and merges it over defaults.
 // Returns (config, warnings, error).
 func Load(path string) (*Config, []string, error) {
+	cfg, warnings, _, err := LoadWithStatus(path)
+	return cfg, warnings, err
+}
+
+// LoadWithStatus is Load with an explicit file status. Callers that may write
+// the configuration must refuse automatic writes for malformed or unsupported
+// files so future-schema or recoverable user data is not replaced by defaults.
+func LoadWithStatus(path string) (*Config, []string, LoadStatus, error) {
 	cfg := Defaults()
 	var warnings []string
 
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return cfg, nil, nil
+			return cfg, nil, LoadMissing, nil
 		}
-		return cfg, nil, fmt.Errorf("reading config: %w", err)
+		return cfg, nil, "", fmt.Errorf("reading config: %w", err)
 	}
 
 	// Parse schema field first to verify compatibility, then unmarshal into config.
@@ -127,17 +145,17 @@ func Load(path string) (*Config, []string, error) {
 		Schema string `json:"$schema"`
 	}
 	if err := json.Unmarshal(data, &probe); err != nil {
-		return cfg, []string{"config file is malformed JSON, using defaults"}, nil
+		return cfg, []string{"config file is malformed JSON, using defaults without overwriting it"}, LoadMalformed, nil
 	}
 	if probe.Schema != "" && probe.Schema != schemaVersion {
 		warnings = append(warnings, fmt.Sprintf("unknown config schema %q, using defaults", probe.Schema))
-		return cfg, warnings, nil
+		return cfg, warnings, LoadUnsupported, nil
 	}
 
 	// Unmarshal into config (merges over defaults since cfg already has them).
 	if err := json.Unmarshal(data, cfg); err != nil {
 		warnings = append(warnings, "config file could not be parsed, using defaults")
-		return Defaults(), warnings, nil
+		return Defaults(), warnings, LoadMalformed, nil
 	}
 
 	// Validate and clamp.
@@ -177,23 +195,52 @@ func Load(path string) (*Config, []string, error) {
 		cfg.Daemon.TerminalApp = "Terminal"
 	}
 
-	return cfg, warnings, nil
+	return cfg, warnings, LoadValid, nil
 }
 
 // Save writes cfg to path, creating parent directories as needed.
 // File is created with 0600 permissions.
 func Save(cfg *Config, path string) error {
+	if cfg == nil {
+		return fmt.Errorf("config is required")
+	}
 	cfg.Schema = schemaVersion
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("creating config directory: %w", err)
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encoding config: %w", err)
 	}
-	if err := os.WriteFile(path, append(data, '\n'), 0600); err != nil {
-		return fmt.Errorf("writing config: %w", err)
+	tmp, err := os.CreateTemp(dir, ".config.json.tmp-*")
+	if err != nil {
+		return fmt.Errorf("creating temporary config: %w", err)
 	}
+	tmpPath := tmp.Name()
+	committed := false
+	defer func() {
+		_ = tmp.Close()
+		if !committed {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := tmp.Chmod(0o600); err != nil {
+		return fmt.Errorf("setting config permissions: %w", err)
+	}
+	if _, err := tmp.Write(append(data, '\n')); err != nil {
+		return fmt.Errorf("writing temporary config: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return fmt.Errorf("syncing temporary config: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("closing temporary config: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("replacing config: %w", err)
+	}
+	committed = true
 	return nil
 }
 

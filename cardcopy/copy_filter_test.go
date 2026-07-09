@@ -26,6 +26,12 @@ func TestCopy_Filter(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dcim, "TEST3.NEF"), []byte("nef"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dcim, "TEST3.XMP"), []byte("xmp"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dcim, "OTHER.XMP"), []byte("orphan"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	res, err := Run(context.Background(), Options{
 		CardPath: card,
@@ -38,8 +44,8 @@ func TestCopy_Filter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Copy failed: %v", err)
 	}
-	if res.FilesCopied != 2 {
-		t.Errorf("Expected 2 files copied, got %d", res.FilesCopied)
+	if res.FilesCopied != 3 {
+		t.Errorf("Expected 3 files copied (two photos plus sidecar), got %d", res.FilesCopied)
 	}
 
 	// Verify filtered file was NOT copied anywhere under dest.
@@ -60,7 +66,7 @@ func TestCopy_Filter(t *testing.T) {
 	}
 
 	// Verify accepted files WERE copied somewhere under dest.
-	for _, name := range []string{"TEST1.JPG", "TEST3.NEF"} {
+	for _, name := range []string{"TEST1.JPG", "TEST3.NEF", "TEST3.XMP"} {
 		exists := false
 		if err := filepath.WalkDir(dest, func(path string, d os.DirEntry, err error) error {
 			if err != nil {
@@ -76,5 +82,8 @@ func TestCopy_Filter(t *testing.T) {
 		if !exists {
 			t.Errorf("Expected %s to be copied, but it was not found under dest", name)
 		}
+	}
+	if _, err := os.Stat(filepath.Join(dest, "2026-03-08", "100MEDIA", "OTHER.XMP")); !os.IsNotExist(err) {
+		t.Fatalf("orphan sidecar should not be selected, stat err=%v", err)
 	}
 }

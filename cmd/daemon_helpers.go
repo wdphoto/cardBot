@@ -140,13 +140,17 @@ func updateSavedDaemonPrefs(mutator func(cfg *config.Config)) {
 		return
 	}
 
-	cfg, _, err := config.Load(cfgPath)
+	cfg, _, status, err := config.LoadWithStatus(cfgPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not load config to update daemon preferences: %v\n", err)
 		cfg = config.Defaults()
 	}
 	if cfg == nil {
 		cfg = config.Defaults()
+	}
+	if status == config.LoadMalformed || status == config.LoadUnsupported {
+		fmt.Fprintf(os.Stderr, "Warning: refusing to overwrite existing %s config at %s\n", status, cfgPath)
+		return
 	}
 
 	mutator(cfg)

@@ -4,6 +4,7 @@ package cardcopy
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -16,6 +17,10 @@ import (
 
 	"github.com/wdphoto/cardBot/fsutil"
 )
+
+// ErrDestinationConflict is returned when a planned destination already exists
+// but cannot be safely treated as the same file.
+var ErrDestinationConflict = errors.New("destination conflict")
 
 // ProgressFunc is called periodically during the copy with current stats.
 type ProgressFunc func(stats Progress)
@@ -79,8 +84,17 @@ type PlannedFile struct {
 	Size          int64
 	Date          string
 	CaptureTime   time.Time
-	Skip          bool
+	Action        PlannedAction
 }
+
+// PlannedAction describes how Execute should handle a planned file.
+type PlannedAction string
+
+const (
+	ActionCopy          PlannedAction = "copy"
+	ActionSkipSizeMatch PlannedAction = "skip-size-match"
+	ActionSkipIdentical PlannedAction = "skip-identical"
+)
 
 // fileEntry holds a file to be copied.
 type fileEntry struct {
@@ -89,6 +103,13 @@ type fileEntry struct {
 	size        int64
 	date        string    // YYYY-MM-DD for folder grouping
 	captureTime time.Time // EXIF capture time (fallback: mtime)
+	selected    bool      // selected by the requested copy filter
+	ext         string    // uppercase extension without the leading dot
+	assetKey    string    // normalized directory + basename without extension
+}
+
+var sidecarExts = map[string]bool{
+	"XMP": true, "WAV": true, "THM": true, "LRV": true, "AAE": true,
 }
 
 // Run executes the copy operation.
@@ -130,6 +151,7 @@ func PlanCopy(ctx context.Context, opts Options) (*Plan, error) {
 	// --- Phase 1: Collect files ---
 	var files []fileEntry
 	var totalBytes int64
+	var selectedFiles int
 	var walkWarnings []string
 
 	err = filepath.WalkDir(dcim, func(path string, d os.DirEntry, err error) error {
@@ -169,15 +191,14 @@ func PlanCopy(ctx context.Context, opts Options) (*Plan, error) {
 
 		rel, _ := filepath.Rel(dcim, path)
 
-		// Apply selective copy filter if provided.
+		// Record selective-copy eligibility, but retain every file in the list.
+		// Timestamp sequence assignment is based on the complete card so a file
+		// receives the same name in all/photos/videos/selects modes.
+		ext := strings.ToUpper(strings.TrimPrefix(filepath.Ext(d.Name()), "."))
+		selected := true
 		if opts.Filter != nil {
-			// Extract extension (uppercase, no dot)
-			ext := filepath.Ext(d.Name())
-			if len(ext) > 0 {
-				ext = strings.ToUpper(ext[1:])
-			}
 			if !opts.Filter(rel, ext) {
-				return nil
+				selected = false
 			}
 		}
 
@@ -197,8 +218,10 @@ func PlanCopy(ctx context.Context, opts Options) (*Plan, error) {
 			size:        info.Size(),
 			date:        date,
 			captureTime: captureTime,
+			selected:    selected,
+			ext:         ext,
+			assetKey:    assetKey(rel),
 		})
-		totalBytes += info.Size()
 		return nil
 	})
 	if err != nil {
@@ -206,6 +229,47 @@ func PlanCopy(ctx context.Context, opts Options) (*Plan, error) {
 			return nil, ctx.Err()
 		}
 		return nil, fmt.Errorf("walking DCIM: %w", err)
+	}
+
+	// Promote sidecars into the selection and metadata of their primary media.
+	// RAW+JPEG pairs and their companions intentionally share one asset key.
+	type assetState struct {
+		selected    bool
+		captureTime time.Time
+		date        string
+		hasPrimary  bool
+	}
+	assets := make(map[string]*assetState)
+	for i := range files {
+		f := &files[i]
+		if sidecarExts[f.ext] {
+			continue
+		}
+		state := assets[f.assetKey]
+		if state == nil {
+			state = &assetState{}
+			assets[f.assetKey] = state
+		}
+		state.selected = state.selected || f.selected
+		if !state.hasPrimary || f.captureTime.Before(state.captureTime) {
+			state.captureTime = f.captureTime
+			state.date = f.date
+		}
+		state.hasPrimary = true
+	}
+	for i := range files {
+		f := &files[i]
+		if sidecarExts[f.ext] {
+			if state := assets[f.assetKey]; state != nil && state.hasPrimary {
+				f.selected = state.selected
+				f.captureTime = state.captureTime
+				f.date = state.date
+			}
+		}
+		if f.selected {
+			selectedFiles++
+			totalBytes += f.size
+		}
 	}
 
 	// Sort files by capture time for chronological sequence numbering.
@@ -226,25 +290,36 @@ func PlanCopy(ctx context.Context, opts Options) (*Plan, error) {
 		Warnings:     walkWarnings,
 		VerifyMethod: verifyMethod,
 	}
-	if len(files) == 0 {
+	if selectedFiles == 0 {
 		return plan, nil
 	}
 
 	// Compute rename mappings for progress reporting and dry-run preview.
 	namingMode := isTimestampMode(opts.NamingMode)
-	if namingMode && len(files) > sequenceMax {
-		return nil, fmt.Errorf("timestamp naming supports at most %d files per copy; got %d", sequenceMax, len(files))
+	assetSequence := make(map[string]int, len(files))
+	nextSequence := 1
+	for i := range files {
+		key := files[i].assetKey
+		if _, ok := assetSequence[key]; !ok {
+			assetSequence[key] = nextSequence
+			nextSequence++
+		}
 	}
-	seq := 1
-
+	assetCount := nextSequence - 1
+	if namingMode && assetCount > sequenceMax {
+		return nil, fmt.Errorf("timestamp naming supports at most %d assets per copy; got %d", sequenceMax, assetCount)
+	}
 	// Pre-compute all destination paths for dry-run and progress reporting.
 	seenDest := make(map[string]string, len(files))
 	for i := range files {
 		f := &files[i]
+		seq := assetSequence[f.assetKey]
+		if !f.selected {
+			continue
+		}
 		destRelPath := f.relPath
 		if namingMode {
 			destRelPath = renamedRelativePath(f.relPath, f.captureTime, seq, SequenceDigits)
-			seq++
 		}
 		destPath, err := safeDestPath(opts.DestBase, f.date, destRelPath)
 		if err != nil {
@@ -263,10 +338,15 @@ func PlanCopy(ctx context.Context, opts Options) (*Plan, error) {
 			Size:          f.size,
 			Date:          f.date,
 			CaptureTime:   f.captureTime,
+			Action:        ActionCopy,
 		}
 		if !opts.DryRun {
-			planned.Skip = shouldSkipExisting(planned, fullVerify, opts.BufferKB)
-			if !planned.Skip {
+			action, actionErr := classifyDestination(planned, fullVerify, opts.BufferKB)
+			if actionErr != nil {
+				return nil, actionErr
+			}
+			planned.Action = action
+			if planned.Action == ActionCopy {
 				plan.BytesRequired += f.size
 			}
 		}
@@ -274,6 +354,12 @@ func PlanCopy(ctx context.Context, opts Options) (*Plan, error) {
 	}
 
 	return plan, nil
+}
+
+func assetKey(relPath string) string {
+	ext := filepath.Ext(relPath)
+	stem := strings.TrimSuffix(filepath.Clean(relPath), ext)
+	return strings.ToLower(stem)
 }
 
 // Execute performs a previously planned copy.
@@ -363,7 +449,7 @@ func Execute(ctx context.Context, plan *Plan, onProgress ProgressFunc) (*Result,
 		}
 
 		f := &plan.Files[i]
-		if f.Skip {
+		if f.Action != ActionCopy {
 			filesSkipped++
 			bytesSkipped += f.Size
 			bytesDone += f.Size
@@ -514,16 +600,28 @@ func partialResult(files, skipped int, bytes, bytesSkipped int64, start time.Tim
 	}
 }
 
-func shouldSkipExisting(f PlannedFile, fullVerify bool, bufferKB int) bool {
-	info, err := os.Stat(f.DestPath)
-	if err != nil || info.Size() != f.Size {
-		return false
+func classifyDestination(f PlannedFile, fullVerify bool, bufferKB int) (PlannedAction, error) {
+	info, err := os.Lstat(f.DestPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ActionCopy, nil
+		}
+		return "", fmt.Errorf("inspecting destination %s: %w", f.DestPath, err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("%w: %s is not a regular file", ErrDestinationConflict, f.DestPath)
+	}
+	if info.Size() != f.Size {
+		return "", fmt.Errorf("%w: %s exists with size %d; source size is %d", ErrDestinationConflict, f.DestPath, info.Size(), f.Size)
 	}
 	if !fullVerify {
-		return true
+		return ActionSkipSizeMatch, nil
 	}
 	buf := make([]byte, bufferKB*1024)
-	return verifyBytes(f.SourcePath, f.DestPath, buf) == nil
+	if err := verifyBytes(f.SourcePath, f.DestPath, buf); err != nil {
+		return "", fmt.Errorf("%w: %s differs from source: %v", ErrDestinationConflict, f.DestPath, err)
+	}
+	return ActionSkipIdentical, nil
 }
 
 // copyFileCtx copies a single file with size verification, atomic rename,
@@ -552,7 +650,7 @@ func copyFileCtx(ctx context.Context, dst, src string, srcSize int64, buf []byte
 
 	// Write to a temporary .part file to avoid exposing half-written files.
 	partPath := dst + ".part"
-	df, err := os.Create(partPath)
+	df, err := os.OpenFile(partPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return err
 	}
@@ -588,9 +686,12 @@ func copyFileCtx(ctx context.Context, dst, src string, srcSize int64, buf []byte
 		return fmt.Errorf("close: %w", err)
 	}
 
-	if err := os.Rename(partPath, dst); err != nil {
+	if err := commitNoReplace(partPath, dst); err != nil {
 		os.Remove(partPath)
-		return fmt.Errorf("rename: %w", err)
+		if errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("%w: %s was created after planning", ErrDestinationConflict, dst)
+		}
+		return fmt.Errorf("committing destination: %w", err)
 	}
 
 	return nil
