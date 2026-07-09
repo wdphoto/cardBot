@@ -162,3 +162,20 @@ func TestPrintfAndRaw_NoPanicWhenFileHandleNil(t *testing.T) {
 	logger.Printf("hello")
 	logger.Raw("world")
 }
+
+func TestLogger_ReportsWriteFailure(t *testing.T) {
+	t.Parallel()
+	logger, err := Open(filepath.Join(t.TempDir(), "test.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	logger.mu.Lock()
+	if err := logger.f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	logger.mu.Unlock()
+	logger.Printf("cannot write")
+	if logger.Err() == nil {
+		t.Fatal("expected logger write error")
+	}
+}

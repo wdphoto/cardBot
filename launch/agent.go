@@ -10,6 +10,8 @@ import (
 	"strings"
 )
 
+// label is intentionally retained for LaunchAgent upgrade/uninstall stability.
+// Changing it would orphan existing agents unless a migration removed both IDs.
 const label = "com.illwill.cardbot"
 
 type commandRunner func(name string, args ...string) error

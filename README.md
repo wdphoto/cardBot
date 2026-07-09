@@ -20,7 +20,7 @@ cardBot was built with the assistance of AI coding tools. This project is an exp
 
 | Platform | Status | Notes |
 |----------|--------|-------|
-| macOS | Primary | Release builds use the no-cgo polling detector |
+| macOS | Primary | Release and normal local builds use polling; native DiskArbitration is opt-in for development |
 | Linux | Best effort | Untested |
 | Windows | Ugh | Someday, Maybe |
 
@@ -96,6 +96,8 @@ cardbot --setup
 | **0.0.12** | Copyright check and injection | Planned |
 
 See [`TODO.md`](TODO.md) for the current technical backlog and discussion items.
+
+Timestamp naming is deterministic across selective copies of the same card. cardBot refuses to overwrite a non-identical destination if two ingests resolve to the same name.
 
 
 ## Uninstalling

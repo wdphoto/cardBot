@@ -1,4 +1,4 @@
-.PHONY: build test cover clean qa-050 qa-051-sleepwake qa-051-permissions
+.PHONY: build test cover clean qa-050 qa-051-sleepwake qa-051-permissions qa-052-installer
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
@@ -25,6 +25,9 @@ qa-051-sleepwake:
 
 qa-051-permissions:
 	./scripts/qa_051_permissions_capture.sh
+
+qa-052-installer:
+	./scripts/qa_052_installer_safety.sh
 
 clean:
 	rm -f cardbot coverage.out

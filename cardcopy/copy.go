@@ -340,15 +340,13 @@ func PlanCopy(ctx context.Context, opts Options) (*Plan, error) {
 			CaptureTime:   f.captureTime,
 			Action:        ActionCopy,
 		}
-		if !opts.DryRun {
-			action, actionErr := classifyDestination(planned, fullVerify, opts.BufferKB)
-			if actionErr != nil {
-				return nil, actionErr
-			}
-			planned.Action = action
-			if planned.Action == ActionCopy {
-				plan.BytesRequired += f.size
-			}
+		action, actionErr := classifyDestination(planned, fullVerify, opts.BufferKB)
+		if actionErr != nil {
+			return nil, actionErr
+		}
+		planned.Action = action
+		if planned.Action == ActionCopy {
+			plan.BytesRequired += f.size
 		}
 		plan.Files = append(plan.Files, planned)
 	}
@@ -386,9 +384,22 @@ func Execute(ctx context.Context, plan *Plan, onProgress ProgressFunc) (*Result,
 				})
 			}
 		}
+		filesCopied, filesSkipped := 0, 0
+		var bytesCopied, bytesSkipped int64
+		for _, f := range plan.Files {
+			if f.Action == ActionCopy {
+				filesCopied++
+				bytesCopied += f.Size
+			} else {
+				filesSkipped++
+				bytesSkipped += f.Size
+			}
+		}
 		return &Result{
-			FilesCopied:  len(plan.Files),
-			BytesCopied:  plan.TotalBytes,
+			FilesCopied:  filesCopied,
+			FilesSkipped: filesSkipped,
+			BytesCopied:  bytesCopied,
+			BytesSkipped: bytesSkipped,
 			DestPath:     opts.DestBase,
 			Warnings:     plan.Warnings,
 			VerifyMethod: plan.VerifyMethod,

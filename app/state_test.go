@@ -279,7 +279,7 @@ func TestCopyFiltered_BackslashCancels(t *testing.T) {
 
 	// Give the copy goroutine time to block on ctx.Done.
 	time.Sleep(50 * time.Millisecond)
-	a.inputChan <- "\\"
+	a.handleInput("\\")
 
 	select {
 	case <-done:
@@ -325,7 +325,7 @@ func TestCopyFiltered_CardRemovedDuringCopy_CancelsAndFinishesCard(t *testing.T)
 	}()
 
 	time.Sleep(50 * time.Millisecond)
-	fd.removals <- cardPath
+	a.handleRemoval(cardPath)
 
 	select {
 	case <-done:

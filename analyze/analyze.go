@@ -184,142 +184,16 @@ func (a *Analyzer) Analyze(ctx context.Context) (*Result, error) {
 		return nil, err
 	}
 
-	// --- Phase 1: Fast directory walk ---
-	var files []fileEntry
-	var warnings []string
-	ratingSidecars := make(map[string]string)
-	err := filepath.WalkDir(dcim, func(path string, d os.DirEntry, err error) error {
-		// Check for cancellation.
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		if err != nil {
-			// Log permission/IO errors but keep walking.
-			// Broken symlinks and not-exist are silently skipped.
-			if !os.IsNotExist(err) {
-				rel, _ := filepath.Rel(dcim, path)
-				warnings = append(warnings, fmt.Sprintf("%s: %v", rel, err))
-			}
-			return nil
-		}
-		if d.IsDir() {
-			if fsutil.IsHidden(d.Name()) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if fsutil.IsHidden(d.Name()) {
-			return nil
-		}
-		// Match copy behavior: do not follow symlinks on untrusted card media.
-		if d.Type()&fs.ModeSymlink != 0 {
-			return nil
-		}
-
-		info, err := d.Info()
-		if err != nil {
-			return nil
-		}
-
-		ext := normalizeExt(filepath.Ext(d.Name()))
-		if ratingSidecarExts[ext] {
-			rel, _ := filepath.Rel(dcim, path)
-			ratingSidecars[mediaStem(rel)] = path
-			return nil
-		}
-		if ext == "" || (!photoExts[ext] && !videoExts[ext]) {
-			return nil
-		}
-
-		rel, _ := filepath.Rel(dcim, path)
-		files = append(files, fileEntry{
-			path:    path,
-			relPath: rel,
-			size:    info.Size(),
-			ext:     ext,
-			mtime:   info.ModTime(),
-		})
-		return nil
-	})
+	files, ratingSidecars, warnings, err := collectMediaFiles(ctx, dcim)
 	if err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
 		return nil, err
 	}
 
-	// --- Phase 2: Parallel EXIF extraction ---
-	// Build lookup of EXIF-eligible files and fan out to workers.
-	exifFiles := make(chan int, 256)
-	exifResults := make([]exifResult, len(files))
-
-	var processed atomic.Int64
-	onProgress := a.onProgress
-	var progressMu sync.Mutex
-	reportProgress := func(count int) {
-		if onProgress == nil {
-			return
-		}
-		progressMu.Lock()
-		defer progressMu.Unlock()
-		onProgress(count)
+	exifResults, err := a.extractEXIF(ctx, files)
+	if err != nil {
+		return nil, err
 	}
-
-	var wg sync.WaitGroup
-	for w := 0; w < a.workers; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			xmpBuf := make([]byte, xmpBufSize)
-			for idx := range exifFiles {
-				// Skip expensive EXIF reads if cancelled.
-				select {
-				case <-ctx.Done():
-					continue
-				default:
-				}
-				f := &files[idx]
-				date, body, lens, rating, ok := readExif(f.path, xmpBuf)
-				exifResults[idx] = exifResult{
-					date:   date,
-					body:   body,
-					lens:   lens,
-					rating: rating,
-					ok:     ok,
-				}
-				n := processed.Add(1)
-				if n%100 == 0 {
-					reportProgress(int(n))
-				}
-			}
-		}()
-	}
-
-	// Send EXIF-eligible files to workers; non-EXIF files need no processing.
-loop:
-	for i := range files {
-		if supportedExif[files[i].ext] {
-			select {
-			case <-ctx.Done():
-				break loop
-			case exifFiles <- i:
-			}
-		}
-	}
-	close(exifFiles)
-	wg.Wait()
-
-	// Check for cancellation after EXIF phase.
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
-	}
-
-	// Fire final progress with total count.
 	totalFiles := len(files)
-	reportProgress(totalFiles)
 
 	// --- Phase 3: Merge ---
 	groups := make(map[string]*dateAccumulator)
@@ -404,6 +278,113 @@ loop:
 		Starred:       starred,
 		Warnings:      warnings,
 	}, nil
+}
+
+func collectMediaFiles(ctx context.Context, dcim string) ([]fileEntry, map[string]string, []string, error) {
+	var files []fileEntry
+	var warnings []string
+	ratingSidecars := make(map[string]string)
+	err := filepath.WalkDir(dcim, func(path string, d os.DirEntry, err error) error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		if err != nil {
+			if !os.IsNotExist(err) {
+				rel, _ := filepath.Rel(dcim, path)
+				warnings = append(warnings, fmt.Sprintf("%s: %v", rel, err))
+			}
+			return nil
+		}
+		if d.IsDir() {
+			if fsutil.IsHidden(d.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if fsutil.IsHidden(d.Name()) || d.Type()&fs.ModeSymlink != 0 {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		ext := normalizeExt(filepath.Ext(d.Name()))
+		if ratingSidecarExts[ext] {
+			rel, _ := filepath.Rel(dcim, path)
+			ratingSidecars[mediaStem(rel)] = path
+			return nil
+		}
+		if ext == "" || (!photoExts[ext] && !videoExts[ext]) {
+			return nil
+		}
+		rel, _ := filepath.Rel(dcim, path)
+		files = append(files, fileEntry{path: path, relPath: rel, size: info.Size(), ext: ext, mtime: info.ModTime()})
+		return nil
+	})
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, nil, warnings, ctx.Err()
+		}
+		return nil, nil, warnings, err
+	}
+	return files, ratingSidecars, warnings, nil
+}
+
+func (a *Analyzer) extractEXIF(ctx context.Context, files []fileEntry) ([]exifResult, error) {
+	exifFiles := make(chan int, 256)
+	exifResults := make([]exifResult, len(files))
+	var processed atomic.Int64
+	onProgress := a.onProgress
+	var progressMu sync.Mutex
+	reportProgress := func(count int) {
+		if onProgress == nil {
+			return
+		}
+		progressMu.Lock()
+		defer progressMu.Unlock()
+		onProgress(count)
+	}
+
+	var wg sync.WaitGroup
+	for range a.workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			xmpBuf := make([]byte, xmpBufSize)
+			for idx := range exifFiles {
+				if ctx.Err() != nil {
+					continue
+				}
+				f := &files[idx]
+				date, body, lens, rating, ok := readExif(f.path, xmpBuf)
+				exifResults[idx] = exifResult{date: date, body: body, lens: lens, rating: rating, ok: ok}
+				if n := processed.Add(1); n%100 == 0 {
+					reportProgress(int(n))
+				}
+			}
+		}()
+	}
+
+sendLoop:
+	for i := range files {
+		if !supportedExif[files[i].ext] {
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			break sendLoop
+		case exifFiles <- i:
+		}
+	}
+	close(exifFiles)
+	wg.Wait()
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	reportProgress(len(files))
+	return exifResults, nil
 }
 
 // xmpBufSize is the size of the reusable buffer for XMP rating scans.

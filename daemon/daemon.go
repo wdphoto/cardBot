@@ -5,6 +5,7 @@
 package daemon
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -17,6 +18,9 @@ import (
 	"github.com/wdphoto/cardBot/detect"
 	"github.com/wdphoto/cardBot/term"
 )
+
+// ErrAlreadyRunning indicates another daemon owns the process lock.
+var ErrAlreadyRunning = errors.New("cardbot daemon is already running")
 
 // detector is the consumer-side interface for card detection.
 // Matches the subset of detect.Detector that the daemon needs.
@@ -49,6 +53,10 @@ type Config struct {
 	// pidPathFn returns the path for the daemon PID file.
 	// If nil, uses the default path (~/.cardbot/cardbot.pid).
 	pidPathFn func() (string, error)
+
+	// enforceSingleton is enabled in production. Tests using injected detectors
+	// opt in only when specifically exercising singleton behavior.
+	enforceSingleton bool
 }
 
 // Daemon is a long-running background process that watches for card insertions.
@@ -62,6 +70,7 @@ type Daemon struct {
 	pidPath           string
 	mu                sync.Mutex
 	sigChan           chan os.Signal
+	enforceSingleton  bool
 }
 
 // New creates a new Daemon instance.
@@ -89,7 +98,7 @@ func New(c Config) *Daemon {
 	pidPath, _ := pidPathFn() // Ignore error; Run() will handle it
 
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	enforceSingleton := c.enforceSingleton || c.newDetector == nil
 
 	return &Daemon{
 		newDetector:       newDetector,
@@ -100,6 +109,7 @@ func New(c Config) *Daemon {
 		now:               now,
 		pidPath:           pidPath,
 		sigChan:           sigChan,
+		enforceSingleton:  enforceSingleton,
 	}
 }
 
@@ -114,11 +124,28 @@ func PidPath() (string, error) {
 
 // Run starts the daemon event loop. It blocks until SIGINT/SIGTERM.
 func (d *Daemon) Run() error {
+	signal.Notify(d.sigChan, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(d.sigChan)
+
+	var lock *processLock
+	if d.enforceSingleton && d.pidPath != "" {
+		if err := os.MkdirAll(filepath.Dir(d.pidPath), 0o700); err != nil {
+			return fmt.Errorf("creating daemon state directory: %w", err)
+		}
+		var err error
+		lock, err = acquireProcessLock(d.pidPath + ".lock")
+		if err != nil {
+			if errors.Is(err, errProcessLocked) {
+				return ErrAlreadyRunning
+			}
+			return fmt.Errorf("acquiring daemon process lock: %w", err)
+		}
+		defer lock.Close()
+	}
 
 	// Write PID file.
 	if d.pidPath != "" {
-		if err := os.MkdirAll(filepath.Dir(d.pidPath), 0755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(d.pidPath), 0700); err != nil {
 			fmt.Printf("[%s] Warning: could not create PID directory: %v\n", term.Ts(), err)
 		} else if err := os.WriteFile(d.pidPath, []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
 			fmt.Printf("[%s] Warning: could not write PID file: %v\n", term.Ts(), err)

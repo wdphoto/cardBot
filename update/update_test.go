@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -23,7 +24,9 @@ func TestCompareVersions(t *testing.T) {
 		{"0.2.0", "0.2.0", 0},
 		{"0.1.9", "0.2.0", -1},
 		{"v1.0.0", "0.9.9", 1},
-		{"1.2", "1.2.0", 0},
+		{"1.2.0", "1.2.0", 0},
+		{"1.2.0", "1.2.0-rc.1", 1},
+		{"1.2.0-rc.2", "1.2.0-rc.10", -1},
 	}
 
 	for _, tt := range tests {
@@ -38,16 +41,39 @@ func TestCompareVersions(t *testing.T) {
 }
 
 func TestParseChecksums(t *testing.T) {
-	data := []byte("abcdef1234567890  cardbot-darwin-arm64\n1234  *cardbot-darwin-amd64\n")
+	hash1 := strings.Repeat("a", 64)
+	hash2 := strings.Repeat("b", 64)
+	data := []byte(hash1 + "  cardbot-darwin-arm64\n" + hash2 + "  *cardbot-darwin-amd64\n")
 	m, err := parseChecksums(data)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m["cardbot-darwin-arm64"] != "abcdef1234567890" {
+	if m["cardbot-darwin-arm64"] != hash1 {
 		t.Fatalf("unexpected hash: %q", m["cardbot-darwin-arm64"])
 	}
-	if m["cardbot-darwin-amd64"] != "1234" {
+	if m["cardbot-darwin-amd64"] != hash2 {
 		t.Fatalf("unexpected hash: %q", m["cardbot-darwin-amd64"])
+	}
+}
+
+func TestParseChecksumsRejectsMalformedAndConflicting(t *testing.T) {
+	t.Parallel()
+	if _, err := parseChecksums([]byte("1234  cardbot\n")); err == nil {
+		t.Fatal("expected short checksum to fail")
+	}
+	a := strings.Repeat("a", 64)
+	b := strings.Repeat("b", 64)
+	if _, err := parseChecksums([]byte(a + "  cardbot\n" + b + "  cardbot\n")); err == nil {
+		t.Fatal("expected conflicting duplicate checksum to fail")
+	}
+}
+
+func TestCompareVersionsRejectsPartialOrTrailingGarbage(t *testing.T) {
+	t.Parallel()
+	for _, version := range []string{"1", "1.2", "1.2.3garbage", "1.02.3", "1.2.3-01"} {
+		if _, err := compareVersions(version, "1.0.0"); err == nil {
+			t.Fatalf("compareVersions(%q) unexpectedly succeeded", version)
+		}
 	}
 }
 

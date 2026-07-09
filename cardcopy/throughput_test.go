@@ -205,11 +205,11 @@ func TestFormatProgressLine(t *testing.T) {
 		{
 			name: "mid copy with eta",
 			p: Progress{
-				FilesDone:  1247,
-				FilesTotal: 3051,
-				BytesDone:  48200000000,
-				BytesTotal: 96400000000,
-				ETASeconds: 252,
+				FilesDone:   1247,
+				FilesTotal:  3051,
+				BytesDone:   48200000000,
+				BytesTotal:  96400000000,
+				ETASeconds:  252,
 				SmoothedBPS: 182 * 1024 * 1024,
 			},
 			want: "Copying  1247/3051  44.9 GB/89.8 GB  182 MB/s  ETA 4m12s",
@@ -217,11 +217,11 @@ func TestFormatProgressLine(t *testing.T) {
 		{
 			name: "early no eta",
 			p: Progress{
-				FilesDone:  3,
-				FilesTotal: 3051,
-				BytesDone:  150000000,
-				BytesTotal: 96400000000,
-				ETASeconds: -1,
+				FilesDone:   3,
+				FilesTotal:  3051,
+				BytesDone:   150000000,
+				BytesTotal:  96400000000,
+				ETASeconds:  -1,
 				SmoothedBPS: 50 * 1024 * 1024,
 			},
 			want: "Copying  3/3051  143.1 MB/89.8 GB  50 MB/s",
@@ -229,11 +229,11 @@ func TestFormatProgressLine(t *testing.T) {
 		{
 			name: "complete",
 			p: Progress{
-				FilesDone:  100,
-				FilesTotal: 100,
-				BytesDone:  5000000000,
-				BytesTotal: 5000000000,
-				ETASeconds: 0,
+				FilesDone:   100,
+				FilesTotal:  100,
+				BytesDone:   5000000000,
+				BytesTotal:  5000000000,
+				ETASeconds:  0,
 				SmoothedBPS: 100 * 1024 * 1024,
 			},
 			want: "Copying  100/100  4.7 GB/4.7 GB  100 MB/s",
@@ -255,11 +255,11 @@ func TestFormatProgressLine_UsesFormatBytes(t *testing.T) {
 	t.Parallel()
 
 	p := Progress{
-		FilesDone:  1,
-		FilesTotal: 10,
-		BytesDone:  1024, // 1.0 KB
-		BytesTotal: 1073741824, // 1.0 GB
-		ETASeconds: -1,
+		FilesDone:   1,
+		FilesTotal:  10,
+		BytesDone:   1024,       // 1.0 KB
+		BytesTotal:  1073741824, // 1.0 GB
+		ETASeconds:  -1,
 		SmoothedBPS: 1024 * 1024,
 	}
 

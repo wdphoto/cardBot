@@ -37,6 +37,9 @@ type App struct {
 	copiedModes map[string]bool    // modes completed this session
 	cardInvalid bool               // true when current card has no DCIM directory
 	scanCancel  context.CancelFunc // cancels the current displayCard goroutine
+	copyCancel  context.CancelFunc // cancels the active copy worker
+	copyRemoved bool               // active copy was cancelled by card removal
+	copyWG      sync.WaitGroup     // lets shutdown wait for the active copy worker
 	spinner     *spinner.Spinner   // scanner spinner
 	version     string             // app version for display and dotfile
 	phase       appPhase           // explicit runtime phase
@@ -195,6 +198,12 @@ func (a *App) Run(ctx context.Context) error {
 
 		case <-ctx.Done():
 			a.setPhase(phaseShuttingDown)
+			a.mu.Lock()
+			if a.copyCancel != nil {
+				a.copyCancel()
+			}
+			a.mu.Unlock()
+			a.copyWG.Wait()
 			a.stopScanning()
 			fmt.Println("\nShutting down...")
 			a.logf("Shutting down")

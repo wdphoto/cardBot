@@ -2,6 +2,8 @@
 
 This review covers the tracked Go code, tests, shell scripts, GitHub Actions workflows, and current project documentation on `scratch` at `8ea6e30`. It is a point-in-time engineering review, not a claim that every hardware and filesystem combination has been exercised.
 
+> Implementation status: the automated and code-level findings in this review were addressed on `codex/codebase-review-2026-07-09`. The original findings remain below as the rationale and audit trail. Current status and the two hardware/performance release checks that cannot be completed in a sandbox are tracked in [`TODO.md`](TODO.md).
+
 ## Executive assessment
 
 The codebase is in substantially better shape than its experimental history suggests. Package boundaries are understandable, the core copy path has a real planning phase, partial files are cleaned up, cancellation is tested, source symlinks are skipped, destination traversal is rejected, full byte verification exists, and the race-enabled suite passes. The strongest packages by test coverage are the data-bearing ones: `cardcopy`, `config`, `daemon`, and `dotfile` are all around 87–89% statement coverage.

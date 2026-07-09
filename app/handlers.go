@@ -267,6 +267,10 @@ func (a *App) handleRemoval(path string) {
 	wasCurrent := a.currentCard != nil && sameCardPath(a.currentCard.Path, path)
 
 	if wasCurrent {
+		if a.phase == phaseCopying && a.copyCancel != nil {
+			a.copyRemoved = true
+			a.copyCancel()
+		}
 		if a.scanCancel != nil {
 			a.scanCancel()
 			a.scanCancel = nil
@@ -365,8 +369,15 @@ func (a *App) handleInput(input string) {
 	case actionHardwareInfo:
 		a.showHardwareInfo(card)
 	case actionCancelCopy:
-		fmt.Printf("\n%s No copy in progress.\n", term.DimTS(term.Ts()))
-		a.printPrompt()
+		a.mu.Lock()
+		cancel := a.copyCancel
+		a.mu.Unlock()
+		if cancel != nil {
+			cancel()
+		} else {
+			fmt.Printf("\n%s No copy in progress.\n", term.DimTS(term.Ts()))
+			a.printPrompt()
+		}
 	case actionUnknown:
 		fmt.Printf("\nUnknown command %q. Press [?] for help.\n", input)
 		a.printPrompt()
@@ -409,7 +420,18 @@ func (a *App) handleCopyCmd(card *detect.Card, mode string) {
 		return
 	}
 
-	a.copyFiltered(card, mode)
+	a.mu.Lock()
+	if a.currentCard == nil || !sameCardPath(a.currentCard.Path, card.Path) || a.phase != phaseReady {
+		a.mu.Unlock()
+		return
+	}
+	a.setPhaseLocked(phaseCopying)
+	a.mu.Unlock()
+	a.copyWG.Add(1)
+	go func() {
+		defer a.copyWG.Done()
+		a.copyFiltered(card, mode)
+	}()
 }
 
 func formatElapsed(d time.Duration) string {

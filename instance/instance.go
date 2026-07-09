@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -102,4 +103,27 @@ func hasOtherInteractiveProcessWithRunner(processName string, selfPID int, run p
 
 func runPgrep(name string, args ...string) ([]byte, error) {
 	return exec.Command(name, args...).Output()
+}
+
+// ProcessMatches reports whether pid's executable command name matches the
+// expected executable. It is used to reject stale PID files whose PID has been
+// reused by an unrelated process.
+func ProcessMatches(pid int, expectedName string) (bool, error) {
+	return processMatchesWithRunner(pid, expectedName, runPgrep)
+}
+
+func processMatchesWithRunner(pid int, expectedName string, run pgrepRunner) (bool, error) {
+	if pid <= 0 {
+		return false, fmt.Errorf("pid must be positive")
+	}
+	expectedName = filepath.Base(strings.TrimSpace(expectedName))
+	if expectedName == "" || expectedName == "." {
+		return false, fmt.Errorf("process name is required")
+	}
+	out, err := run("ps", "-p", strconv.Itoa(pid), "-o", "comm=")
+	if err != nil {
+		return false, err
+	}
+	actual := filepath.Base(strings.TrimSpace(string(out)))
+	return actual == expectedName, nil
 }

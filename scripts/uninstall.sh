@@ -6,6 +6,8 @@ NO_SUDO=0
 DRY_RUN=0
 PURGE=0
 EXTRA_INSTALL_DIR=""
+STATE_DIR="${CARDBOT_STATE_DIR:-${HOME}/.cardbot}"
+INSTALL_RECORD="${STATE_DIR}/install-path"
 
 usage() {
   cat <<'EOF'
@@ -71,6 +73,9 @@ done
 
 need_cmd uname
 need_cmd id
+need_cmd grep
+need_cmd ps
+need_cmd sed
 
 run_maybe() {
   if [ "$DRY_RUN" -eq 1 ]; then
@@ -115,6 +120,45 @@ remove_file() {
   say "Warning: could not remove $p"
 }
 
+is_cardbot_binary() {
+  p="$1"
+  [ -n "$p" ] || return 1
+  [ -f "$p" ] && [ -x "$p" ] || return 1
+  "$p" --version 2>/dev/null | grep -q '^cardbot '
+}
+
+remove_cardbot_candidate() {
+  p="$1"
+  [ -n "$p" ] || return 0
+  if [ ! -e "$p" ] && [ ! -L "$p" ]; then
+    return 0
+  fi
+  if ! is_cardbot_binary "$p"; then
+    say "Warning: not removing unverified cardbot candidate: $p"
+    return 0
+  fi
+  remove_file "$p"
+}
+
+stop_recorded_daemon() {
+  pid_file="${STATE_DIR}/cardbot.pid"
+  [ -f "$pid_file" ] || return 0
+  pid="$(sed -n '1p' "$pid_file" 2>/dev/null || true)"
+  case "$pid" in
+    ''|*[!0-9]*)
+      say "Warning: ignoring invalid daemon PID file: $pid_file"
+      return 0
+      ;;
+  esac
+  comm="$(ps -p "$pid" -o comm= 2>/dev/null || true)"
+  comm="${comm##*/}"
+  if [ "$comm" != "cardbot" ]; then
+    say "Warning: PID $pid is not cardbot; leaving it running"
+    return 0
+  fi
+  run_ignore kill "$pid"
+}
+
 remove_dir_if_empty() {
   d="$1"
   [ -n "$d" ] || return 0
@@ -132,10 +176,12 @@ say "==> cardBot uninstaller"
 OS_RAW="$(uname -s)"
 CB_BIN="$(command -v cardbot 2>/dev/null || true)"
 
-if [ -n "$CB_BIN" ]; then
+if [ -n "$CB_BIN" ] && is_cardbot_binary "$CB_BIN"; then
   say "Detected binary in PATH: $CB_BIN"
 else
-  say "Binary not found in PATH; continuing with manual cleanup"
+  [ -z "$CB_BIN" ] || say "Warning: PATH candidate is not cardBot: $CB_BIN"
+  CB_BIN=""
+  say "Verified cardBot binary not found in PATH; continuing with recorded cleanup"
 fi
 
 # Try built-in daemon uninstall first (updates config start_at_login=false).
@@ -143,8 +189,9 @@ if [ -n "$CB_BIN" ]; then
   run_ignore "$CB_BIN" uninstall-daemon
 fi
 
-# Always stop background daemon process if running.
-run_ignore pkill -f "cardbot --daemon"
+# Stop only the daemon PID recorded by cardBot, and only after verifying its
+# process command name. Avoid broad pkill patterns that can hit unrelated jobs.
+stop_recorded_daemon
 
 if [ "$OS_RAW" = "Darwin" ]; then
   UID_NUM="$(id -u)"
@@ -163,13 +210,20 @@ if [ "$OS_RAW" = "Darwin" ]; then
   remove_dir_if_empty "$HOME/Library/LaunchAgents"
 fi
 
-# Remove detected + likely binary locations.
-remove_file "$CB_BIN"
-[ "$CB_BIN" = "/usr/local/bin/cardbot" ] || remove_file "/usr/local/bin/cardbot"
-[ "$CB_BIN" = "$HOME/.local/bin/cardbot" ] || remove_file "$HOME/.local/bin/cardbot"
-[ "$CB_BIN" = "/opt/homebrew/bin/cardbot" ] || remove_file "/opt/homebrew/bin/cardbot"
+# Remove the recorded install first, then verified legacy candidates.
+RECORDED_BIN=""
+if [ -f "$INSTALL_RECORD" ]; then
+  RECORDED_BIN="$(sed -n '1p' "$INSTALL_RECORD" 2>/dev/null || true)"
+fi
+remove_cardbot_candidate "$RECORDED_BIN"
+remove_cardbot_candidate "$CB_BIN"
+remove_cardbot_candidate "/usr/local/bin/cardbot"
+remove_cardbot_candidate "$HOME/.local/bin/cardbot"
+remove_cardbot_candidate "/opt/homebrew/bin/cardbot"
+remove_file "$INSTALL_RECORD"
 
 if [ -n "$EXTRA_INSTALL_DIR" ]; then
+  # Explicit user-supplied paths are authoritative.
   remove_file "$EXTRA_INSTALL_DIR/cardbot"
 fi
 

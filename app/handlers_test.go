@@ -80,6 +80,7 @@ func TestHandleCopyCmd_Allowed(t *testing.T) {
 	a.copiedModes = make(map[string]bool)
 
 	a.handleCopyCmd(card, "all")
+	a.copyWG.Wait()
 
 	if called != 1 {
 		t.Fatalf("copy runner called %d times, want 1", called)

@@ -319,7 +319,11 @@ func runInteractive(ctx context.Context, info BuildInfo, v *viper.Viper, flags *
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: could not open log file: %s\n", term.FriendlyErr(err))
 			} else {
-				defer logger.Close()
+				defer func() {
+					if closeErr := logger.Close(); closeErr != nil {
+						fmt.Fprintf(os.Stderr, "Warning: log write failed: %v\n", closeErr)
+					}
+				}()
 			}
 		}
 	}

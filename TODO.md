@@ -4,31 +4,36 @@ This is the concise project backlog. Rationale, evidence, and acceptance guidanc
 
 ## P1 — before the next serious release
 
-- [ ] Make destination conflicts non-destructive: classify absent/identical/conflicting targets, fail planning on unresolved conflicts, and prevent final-rename races from replacing existing work.
-- [ ] Define stable timestamp naming across cards, selective modes, repeated ingests, and existing destination content; correct setup text to match the invariant.
-- [ ] Make config saves atomic and never autosave defaults over malformed or unsupported-schema config files.
-- [ ] Decide whether macOS releases use native DiskArbitration/cgo or the polling detector, then harden and integration-test the chosen path.
+- [x] Make destination conflicts non-destructive: classify copy/size-match/identical actions, fail planning on unresolved conflicts, and use a no-replace final commit.
+- [x] Make timestamp names stable across selective modes and repeated ingests of the same card. Cross-card collisions fail safely instead of overwriting, and setup text now states that invariant.
+- [x] Make config saves atomic and never autosave defaults over malformed or unsupported-schema config files.
+- [x] Use the polling macOS detector for normal releases; keep the hardened DiskArbitration backend behind the explicit `cardbot_native` build tag.
 
 ## P2 — reliability and workflow
 
-- [ ] Simplify the nested copy/event loop into worker messages handled by one app loop.
-- [ ] Enforce a real daemon singleton with stale/reused PID handling.
-- [ ] Model primary media plus sidecars (`.XMP`, `.WAV`, `.THM`, `.LRV`, etc.) as one ingest asset for filtering, naming, verification, and status.
-- [ ] Add external XMP rating support.
-- [ ] Add reproducible CI checks for `staticcheck`, `govulncheck`, formatting, shell lint, and all release build targets.
-- [ ] Add macOS detector/eject/sleep-wake integration coverage and CLI orchestration tests.
-- [ ] Harden updater version/checksum parsing, response limits, release provenance, and cross-platform replacement tests.
-- [ ] Make uninstall target only verified/recorded installations by default.
+- [x] Remove the nested copy event loop. `App.Run` is now the single consumer of detector, removal, input, and shutdown events while copy work runs in a cancellable worker.
+- [x] Enforce a real daemon singleton with a lifetime lock and reject stale/reused PIDs by checking process identity.
+- [x] Model primary media plus sidecars (`.XMP`, `.WAV`, `.THM`, `.LRV`, `.AAE`) as one ingest asset for filtering and timestamp naming; normal copy planning, verification, and status apply to every member.
+- [x] Add external XMP rating support.
+- [x] Add reproducible CI checks for `staticcheck`, `govulncheck`, formatting, shell lint, race tests, and release build targets.
+- [x] Add restart/concurrent-lifecycle detector tests and compile/test both release polling and opt-in native macOS backends.
+- [x] Harden updater SemVer/checksum parsing, response limits, release provenance, and supported-platform replacement behavior.
+- [x] Make uninstall target only recorded or identity-verified installations by default, with temporary-home script QA.
 
 ## P3 — maintainability and decisions
 
-- [ ] Split large multi-phase functions when touched: `runInteractive`, `copyFiltered`, `analyze.Analyze`, and copy planning/execution.
-- [ ] Surface persistent logger and config metadata write failures instead of silently discarding them.
-- [ ] Align `NOTES.md` daemon claims and setup naming claims with implemented behavior.
-- [ ] Decide whether the LaunchAgent label remains `com.illwill.cardbot` for stability.
-- [ ] Decide whether unsupported Windows builds should compile with stub hardware support.
-- [ ] Add representative benchmarks/profiles for analysis, planning, copying, cancellation, and full verification.
-- [ ] Consider raw single-key input only after event-loop cleanup.
+- [x] Split the analysis collection/EXIF phases and simplify copy orchestration. Further `runInteractive`/planner extraction is deferred until those paths need behavioral changes; splitting them now would be churn without a testability gain.
+- [x] Surface persistent logger and config metadata write failures instead of silently discarding them.
+- [x] Align `NOTES.md` daemon claims and setup naming claims with implemented behavior.
+- [x] Keep the LaunchAgent label `com.illwill.cardbot` for upgrade stability; changing it would strand existing installed agents.
+- [x] Keep Windows runtime unsupported but compile it with stub hardware support so cross-build regressions are visible.
+- [x] Add representative analysis, planning, and full-verification benchmarks. Cancellation remains covered by deterministic tests; hardware profiling is a release QA activity.
+- [x] Keep line-based input. Raw single-key mode would add terminal-state and accessibility risk without improving ingest safety.
+
+## Manual release QA
+
+- [ ] On each supported macOS release line, exercise real card insert/removal, eject, sleep/wake, permission denial, and cancellation with the polling backend.
+- [ ] Run the benchmark suite on representative RAW/video cards and local, external, and network destinations before changing worker or buffer defaults.
 
 ## Completed safeguards to preserve
 

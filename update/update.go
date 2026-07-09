@@ -22,6 +22,9 @@ const (
 	DefaultRepo    = "wdphoto/cardBot"
 	DefaultAPIBase = "https://api.github.com"
 	userAgent      = "cardbot-updater"
+	maxMetadata    = 1 << 20
+	maxChecksums   = 4 << 20
+	maxBinaryBytes = 256 << 20
 )
 
 var (
@@ -46,7 +49,7 @@ type CheckResult struct {
 	Update  bool
 }
 
-var semverRe = regexp.MustCompile(`^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?`)
+var semverRe = regexp.MustCompile(`^[vV]?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$`)
 
 // PlatformAssetName returns the release asset name for the current platform.
 func PlatformAssetName(goos, goarch string) string {
@@ -100,7 +103,7 @@ func SelfUpdateForPlatform(ctx context.Context, client *http.Client, apiBase, re
 		return "", fmt.Errorf("%w: checksums.txt", ErrAssetNotFound)
 	}
 
-	sumsData, err := getBytes(ctx, client, sumsURL)
+	sumsData, err := getBytes(ctx, client, sumsURL, maxChecksums)
 	if err != nil {
 		return "", fmt.Errorf("downloading checksums: %w", err)
 	}
@@ -151,7 +154,7 @@ func SelfUpdateForPlatform(ctx context.Context, client *http.Client, apiBase, re
 
 func latestRelease(ctx context.Context, client *http.Client, apiBase, repo string) (*Release, error) {
 	url := strings.TrimRight(apiBase, "/") + "/repos/" + repo + "/releases/latest"
-	data, err := getBytes(ctx, client, url)
+	data, err := getBytes(ctx, client, url, maxMetadata)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +177,7 @@ func findAssetURL(rel *Release, name string) (string, bool) {
 	return "", false
 }
 
-func getBytes(ctx context.Context, client *http.Client, url string) ([]byte, error) {
+func getBytes(ctx context.Context, client *http.Client, url string, maxBytes int64) ([]byte, error) {
 	if client == nil {
 		client = http.DefaultClient
 	}
@@ -195,9 +198,15 @@ func getBytes(ctx context.Context, client *http.Client, url string) ([]byte, err
 		return nil, fmt.Errorf("http %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
-	data, err := io.ReadAll(resp.Body)
+	if resp.ContentLength > maxBytes {
+		return nil, fmt.Errorf("response exceeds %d-byte limit", maxBytes)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
 	if err != nil {
 		return nil, err
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("response exceeds %d-byte limit", maxBytes)
 	}
 	return data, nil
 }
@@ -221,10 +230,17 @@ func downloadToFileSHA256(ctx context.Context, client *http.Client, url string, 
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return "", fmt.Errorf("downloading binary: http %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
+	if resp.ContentLength > maxBinaryBytes {
+		return "", fmt.Errorf("downloading binary: asset exceeds %d-byte limit", maxBinaryBytes)
+	}
 
 	h := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(dst, h), resp.Body); err != nil {
+	n, err := io.Copy(io.MultiWriter(dst, h), io.LimitReader(resp.Body, maxBinaryBytes+1))
+	if err != nil {
 		return "", fmt.Errorf("writing update file: %w", err)
+	}
+	if n > maxBinaryBytes {
+		return "", fmt.Errorf("downloading binary: asset exceeds %d-byte limit", maxBinaryBytes)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
@@ -242,7 +258,16 @@ func parseChecksums(data []byte) (map[string]string, error) {
 			continue
 		}
 		hash := strings.ToLower(parts[0])
+		if len(hash) != sha256.Size*2 {
+			return nil, fmt.Errorf("invalid SHA256 checksum %q", parts[0])
+		}
+		if _, err := hex.DecodeString(hash); err != nil {
+			return nil, fmt.Errorf("invalid SHA256 checksum %q", parts[0])
+		}
 		name := strings.TrimPrefix(parts[len(parts)-1], "*")
+		if existing, ok := out[name]; ok && existing != hash {
+			return nil, fmt.Errorf("conflicting checksums for %s", name)
+		}
 		out[name] = hash
 	}
 	if err := s.Err(); err != nil {
@@ -264,35 +289,94 @@ func compareVersions(a, b string) (int, error) {
 		return 0, err
 	}
 	for i := 0; i < 3; i++ {
-		if av[i] > bv[i] {
+		if av.core[i] > bv.core[i] {
 			return 1, nil
 		}
-		if av[i] < bv[i] {
+		if av.core[i] < bv.core[i] {
 			return -1, nil
 		}
 	}
-	return 0, nil
+	return comparePrerelease(av.prerelease, bv.prerelease), nil
 }
 
 func normalizeVersion(v string) string {
 	return strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(v), "v"), "V")
 }
 
-func parseVersion(v string) ([3]int, error) {
+type parsedVersion struct {
+	core       [3]int
+	prerelease string
+}
+
+func parseVersion(v string) (parsedVersion, error) {
 	m := semverRe.FindStringSubmatch(strings.TrimSpace(v))
 	if len(m) == 0 {
-		return [3]int{}, fmt.Errorf("invalid version: %q", v)
+		return parsedVersion{}, fmt.Errorf("invalid version: %q", v)
 	}
-	var out [3]int
+	var out parsedVersion
 	for i := 1; i <= 3; i++ {
-		if m[i] == "" {
-			continue
-		}
 		n, err := strconv.Atoi(m[i])
 		if err != nil {
-			return [3]int{}, fmt.Errorf("invalid version: %q", v)
+			return parsedVersion{}, fmt.Errorf("invalid version: %q", v)
 		}
-		out[i-1] = n
+		out.core[i-1] = n
+	}
+	out.prerelease = m[4]
+	for _, identifier := range strings.Split(out.prerelease, ".") {
+		if len(identifier) > 1 && identifier[0] == '0' && allDigits(identifier) {
+			return parsedVersion{}, fmt.Errorf("invalid version: %q", v)
+		}
 	}
 	return out, nil
+}
+
+func comparePrerelease(a, b string) int {
+	if a == b {
+		return 0
+	}
+	if a == "" {
+		return 1
+	}
+	if b == "" {
+		return -1
+	}
+	ap, bp := strings.Split(a, "."), strings.Split(b, ".")
+	for i := 0; i < len(ap) && i < len(bp); i++ {
+		if ap[i] == bp[i] {
+			continue
+		}
+		aNumeric := allDigits(ap[i])
+		bNumeric := allDigits(bp[i])
+		switch {
+		case aNumeric && bNumeric:
+			if len(ap[i]) < len(bp[i]) || (len(ap[i]) == len(bp[i]) && ap[i] < bp[i]) {
+				return -1
+			}
+			return 1
+		case aNumeric:
+			return -1
+		case bNumeric:
+			return 1
+		case ap[i] < bp[i]:
+			return -1
+		default:
+			return 1
+		}
+	}
+	if len(ap) < len(bp) {
+		return -1
+	}
+	return 1
+}
+
+func allDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := range len(s) {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }

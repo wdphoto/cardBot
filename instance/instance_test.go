@@ -147,3 +147,27 @@ func TestHasOtherInteractiveProcess_PsFailsTreatsAsInteractive(t *testing.T) {
 		t.Fatal("got false, want true — should treat as interactive when ps fails")
 	}
 }
+
+func TestProcessMatches(t *testing.T) {
+	t.Parallel()
+	run := func(name string, args ...string) ([]byte, error) {
+		if name != "ps" {
+			t.Fatalf("command = %q, want ps", name)
+		}
+		return []byte("/usr/local/bin/cardbot\n"), nil
+	}
+	got, err := processMatchesWithRunner(42, "cardbot", run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got {
+		t.Fatal("expected process to match")
+	}
+	got, err = processMatchesWithRunner(42, "other", run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got {
+		t.Fatal("unexpected process match")
+	}
+}

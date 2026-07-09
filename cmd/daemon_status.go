@@ -71,15 +71,6 @@ type daemonStatusLAReport struct {
 	Error     string `json:"error,omitempty"`
 }
 
-func runDaemonStatusCommand(args []string) int {
-	opts, err := parseDaemonStatusOptions(args)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		return 2
-	}
-	return runDaemonStatus(opts, "")
-}
-
 func runDaemonStatus(opts daemonStatusOptions, version string) int {
 	report := collectDaemonStatusReport(opts, version)
 	if opts.JSON {
@@ -245,6 +236,19 @@ func collectDaemonInstanceStatus() daemonStatusDIReport {
 	err = process.Signal(syscall.Signal(0))
 	if err != nil {
 		report.Running = false
+		return report
+	}
+	expectedName := "cardbot"
+	if exe, exeErr := os.Executable(); exeErr == nil {
+		expectedName = filepath.Base(exe)
+	}
+	matches, matchErr := instance.ProcessMatches(pid, expectedName)
+	if matchErr != nil {
+		report.CheckError = fmt.Sprintf("verifying PID process identity: %v", matchErr)
+		return report
+	}
+	if !matches {
+		report.CheckError = fmt.Sprintf("PID %d belongs to a different executable", pid)
 		return report
 	}
 	report.Running = true

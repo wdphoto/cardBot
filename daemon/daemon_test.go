@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"errors"
 	"os"
 	"strconv"
 	"strings"
@@ -22,6 +23,36 @@ type fakeDetector struct {
 	stopped  atomic.Bool
 	events   chan *detect.Card
 	removals chan string
+}
+
+func TestDaemon_RejectsConcurrentInstance(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	pidPath := dir + "/cardbot.pid"
+	fd1 := newFakeDetector()
+	d1 := New(Config{
+		newDetector:      func() detector { return fd1 },
+		pidPathFn:        func() (string, error) { return pidPath, nil },
+		enforceSingleton: true,
+	})
+	done := make(chan error, 1)
+	go func() { done <- d1.Run() }()
+	for !fd1.started.Load() {
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	d2 := New(Config{
+		newDetector:      func() detector { return newFakeDetector() },
+		pidPathFn:        func() (string, error) { return pidPath, nil },
+		enforceSingleton: true,
+	})
+	if err := d2.Run(); !errors.Is(err, ErrAlreadyRunning) {
+		t.Fatalf("second Run() error = %v, want ErrAlreadyRunning", err)
+	}
+	d1.sigChan <- os.Interrupt
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
 }
 
 func newFakeDetector() *fakeDetector {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/wdphoto/cardBot/analyze"
@@ -18,19 +17,10 @@ import (
 
 const dryRunPreviewLimit = 200
 
-// copyFiltered runs the copy operation for the given card and mode.
-//
-// During copy, this function takes over event handling from Run(). It runs its
-// own select loop that drains detector.Events(), detector.Removals(), and
-// inputChan concurrently with the main Run() loop. This means Run() will not
-// see any card/removal events while a copy is in progress — copyFiltered
-// handles them directly by calling handleCardEvent/handleRemoval.
-//
-// This is intentional: the copy loop needs to react to card removal (cancel
-// the copy) and new card insertions (queue them) while showing progress output
-// under printMu. If a new event source is added to the detector or Run() loop,
-// it must also be handled here to avoid silent event drops.
+// copyFiltered runs one copy worker. App.Run remains the sole owner of detector,
+// removal, input, and shutdown events while this worker reports progress.
 func (a *App) copyFiltered(card *detect.Card, mode string) {
+	defer a.finishCopyPhase(card.Path)
 	destBase, err := config.ExpandPath(a.cfg.Destination.Path)
 	if err != nil {
 		fmt.Printf("\n%s Error: %s\n", a.TsPrefix(), term.FriendlyErr(err))
@@ -86,10 +76,18 @@ func (a *App) copyFiltered(card *detect.Card, mode string) {
 		a.setPhaseLocked(phaseCopying)
 	}
 	a.mu.Unlock()
-	defer a.finishCopyPhase(card.Path)
-
 	ctx, cancel := context.WithCancel(a.ctx)
 	defer cancel()
+	a.mu.Lock()
+	a.copyCancel = cancel
+	a.copyRemoved = false
+	a.mu.Unlock()
+	defer func() {
+		a.mu.Lock()
+		a.copyCancel = nil
+		a.copyRemoved = false
+		a.mu.Unlock()
+	}()
 
 	var filter func(relPath, ext string) bool
 	switch mode {
@@ -136,143 +134,86 @@ func (a *App) copyFiltered(card *detect.Card, mode string) {
 		VerifyMode:    a.cfg.Advanced.VerifyMode,
 	}
 
-	type copyOutcome struct {
-		result *cardcopy.Result
-		err    error
-	}
-	doneCh := make(chan copyOutcome, 1)
-
 	lastUpdate := time.Now()
 	previewPrinted := 0
 	previewHidden := 0
 
-	go func() {
-		r, err := a.runCopy(ctx, opts, func(p cardcopy.Progress) {
-			// In dry-run mode, print rename mappings (capped for large cards).
-			if isDryRun {
-				if p.SourceFile == "" {
-					return
-				}
-				a.printMu.Lock()
-				if previewPrinted < dryRunPreviewLimit {
-					if p.SourceFile != p.CurrentFile {
-						fmt.Printf("  %s → %s\n", p.SourceFile, p.CurrentFile)
-					} else {
-						fmt.Printf("  %s (unchanged)\n", p.SourceFile)
-					}
-					previewPrinted++
-				} else {
-					previewHidden++
-				}
-				a.printMu.Unlock()
+	result, copyErr := a.runCopy(ctx, opts, func(p cardcopy.Progress) {
+		if isDryRun {
+			if p.SourceFile == "" {
 				return
 			}
-			// Normal progress display during actual copy.
-			now := time.Now()
-			if now.Sub(lastUpdate) < 2*time.Second && p.FilesDone < p.FilesTotal {
-				return
-			}
-			lastUpdate = now
 			a.printMu.Lock()
-			fmt.Printf("\r%s %s    ",
-				term.DimTS(term.Ts()),
-				cardcopy.FormatProgressLine(p))
-			a.printMu.Unlock()
-		})
-		doneCh <- copyOutcome{r, err}
-	}()
-
-	var cardRemovedDuringCopy bool
-
-	for {
-		select {
-		case outcome := <-doneCh:
-			result, copyErr := outcome.result, outcome.err
-
-			// Log any walk warnings.
-			if result != nil {
-				for _, w := range result.Warnings {
-					a.logf("Copy warning: %s", w)
-				}
-			}
-
-			if errors.Is(copyErr, context.Canceled) {
-				copied := 0
-				if result != nil {
-					copied = result.FilesCopied
-				}
-				if cardRemovedDuringCopy {
-					a.printMu.Lock()
-					fmt.Printf("\n%s Copy stopped — card removed. %d files copied.\n",
-						term.DimTS(term.Ts()), copied)
-					a.printMu.Unlock()
-					a.logf("Copy stopped: card removed. %d files copied.", copied)
-					a.finishCard()
+			if previewPrinted < dryRunPreviewLimit {
+				if p.SourceFile != p.CurrentFile {
+					fmt.Printf("  %s → %s\n", p.SourceFile, p.CurrentFile)
 				} else {
-					a.printMu.Lock()
-					fmt.Printf("\n%s Copy cancelled — %d files copied.\n",
-						term.DimTS(term.Ts()), copied)
-					a.printMu.Unlock()
-					a.logf("Copy cancelled. %d files copied.", copied)
-					a.drainInput()
-					a.printPrompt()
+					fmt.Printf("  %s (unchanged)\n", p.SourceFile)
 				}
-				return
-			}
-
-			if copyErr != nil {
-				a.printMu.Lock()
-				fmt.Printf("\n%s Copy failed: %s\n", term.DimTS(term.Ts()), term.FriendlyErr(copyErr))
-				if result != nil && result.FilesCopied > 0 {
-					fmt.Printf("%s %d files copied before failure.\n", term.DimTS(term.Ts()), result.FilesCopied)
-				}
-				a.printMu.Unlock()
-				a.logf("Copy failed: %v", copyErr)
-				a.drainInput()
-				a.printPrompt()
-				return
-			}
-
-			// --- Success ---
-			a.handleCopySuccess(card, mode, destBase, result, isDryRun, previewHidden)
-			fmt.Println()
-			a.drainInput()
-			a.printPrompt()
-			return
-
-		case path := <-a.detector.Removals():
-			if path == card.Path {
-				// Current card pulled — cancel the copy and wait for doneCh.
-				cardRemovedDuringCopy = true
-				cancel()
+				previewPrinted++
 			} else {
-				// A queued card was removed; handle under printMu to avoid garbling progress output.
-				a.printMu.Lock()
-				a.handleRemoval(path)
-				a.printMu.Unlock()
+				previewHidden++
 			}
-
-		case newCard := <-a.detector.Events():
-			// Queue any cards inserted while copying.
-			a.printMu.Lock()
-			a.handleCardEvent(newCard)
 			a.printMu.Unlock()
-
-		case input := <-a.inputChan:
-			if strings.ToLower(input) == "\\" {
-				cancel()
-			}
-			// All other input is silently ignored during copy.
-
-		case <-a.ctx.Done():
-			a.setPhase(phaseShuttingDown)
-			cancel()
-			<-doneCh // wait for copy goroutine to finish
-			fmt.Println("\nShutting down...")
-			a.logf("Shutting down")
 			return
 		}
+		now := time.Now()
+		if now.Sub(lastUpdate) < 2*time.Second && p.FilesDone < p.FilesTotal {
+			return
+		}
+		lastUpdate = now
+		a.printMu.Lock()
+		fmt.Printf("\r%s %s    ", term.DimTS(term.Ts()), cardcopy.FormatProgressLine(p))
+		a.printMu.Unlock()
+	})
+
+	if result != nil {
+		for _, w := range result.Warnings {
+			a.logf("Copy warning: %s", w)
+		}
 	}
+	if errors.Is(copyErr, context.Canceled) {
+		copied := 0
+		if result != nil {
+			copied = result.FilesCopied
+		}
+		a.mu.Lock()
+		removed := a.copyRemoved
+		shuttingDown := a.phase == phaseShuttingDown
+		a.mu.Unlock()
+		a.printMu.Lock()
+		if removed {
+			fmt.Printf("\n%s Copy stopped — card removed. %d files copied.\n", term.DimTS(term.Ts()), copied)
+		} else if !shuttingDown {
+			fmt.Printf("\n%s Copy cancelled — %d files copied.\n", term.DimTS(term.Ts()), copied)
+		}
+		a.printMu.Unlock()
+		if removed {
+			a.logf("Copy stopped: card removed. %d files copied.", copied)
+		} else if !shuttingDown {
+			a.logf("Copy cancelled. %d files copied.", copied)
+			a.drainInput()
+			a.printPrompt()
+		}
+		return
+	}
+	if copyErr != nil {
+		a.printMu.Lock()
+		fmt.Printf("\n%s Copy failed: %s\n", term.DimTS(term.Ts()), term.FriendlyErr(copyErr))
+		if result != nil && result.FilesCopied > 0 {
+			fmt.Printf("%s %d files copied before failure.\n", term.DimTS(term.Ts()), result.FilesCopied)
+		}
+		a.printMu.Unlock()
+		a.logf("Copy failed: %v", copyErr)
+		a.drainInput()
+		a.printPrompt()
+		return
+	}
+
+	a.handleCopySuccess(card, mode, destBase, result, isDryRun, previewHidden)
+	fmt.Println()
+	a.drainInput()
+	a.printPrompt()
 }
 
 func (a *App) handleCopySuccess(card *detect.Card, mode, destBase string, result *cardcopy.Result, isDryRun bool, previewHidden int) {

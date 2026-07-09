@@ -92,7 +92,7 @@ Use one of: `darwin-arm64`, `darwin-amd64`, `linux-amd64`, `linux-arm64`.
 ## Build from source
 
 Requirements:
-- Go 1.25+
+- Go 1.26.5+ (the project toolchain directive pins this security-patched release)
 - Git
 
 ```bash
@@ -102,11 +102,17 @@ go build -o cardbot .
 ./cardbot --version
 ```
 
-### macOS with Xcode CLI tools (local native detection path)
+### macOS with Xcode CLI tools
 
 ```bash
 xcode-select --install
 go build -o cardbot .
+```
+
+Normal local and release builds use the polling detector. The experimental native DiskArbitration backend is an explicit development build:
+
+```bash
+go build -tags cardbot_native -o cardbot .
 ```
 
 ### macOS without Xcode (CGO disabled)
@@ -160,6 +166,8 @@ Manage login auto-start (macOS):
 cardbot install-daemon
 cardbot uninstall-daemon
 ```
+
+The LaunchAgent label remains `com.illwill.cardbot` intentionally so upgrades and uninstall operations continue to find existing installations.
 
 Check daemon status:
 
@@ -259,8 +267,8 @@ sh scripts/uninstall.sh --install-dir ~/bin --purge
 
 ## Daemon behavior
 
-- Launches **Terminal.app** via AppleScript on card insert.
-- Terminal selection has been simplified in setup (no app-choice prompt).
+- Launches the configured terminal application on card insert. Terminal.app, the system default, Ghostty, generic applications, and custom launch arguments are supported.
+- Terminal selection is not part of first-run setup; edit the config for advanced launcher behavior.
 - Single-instance guard prevents duplicate foreground launches.
 - Duplicate-event cooldown suppresses rapid repeat mount events.
 
@@ -300,7 +308,7 @@ Important daemon fields:
 }
 ```
 
-`terminal_app` is retained for backward compatibility but daemon launches currently use Terminal.app via AppleScript.
+`terminal_app` selects the launch strategy. `Terminal` uses AppleScript, `Default` opens a temporary command script with the system default handler, and Ghostty receives its dedicated argument form.
 
 `launch_args` — extra arguments passed to the terminal app when launching (advanced use only).
 

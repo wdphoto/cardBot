@@ -5,6 +5,8 @@ REPO="${REPO:-wdphoto/cardBot}"
 VERSION="${VERSION:-latest}"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 DEFAULT_INSTALL_DIR="/usr/local/bin"
+STATE_DIR="${CARDBOT_STATE_DIR:-${HOME}/.cardbot}"
+INSTALL_RECORD="${STATE_DIR}/install-path"
 NO_SUDO=0
 DRY_RUN=0
 EXPLICIT_INSTALL_DIR=0
@@ -135,6 +137,7 @@ else
 fi
 
 TMP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t cardbot-install)"
+# shellcheck disable=SC2329 # invoked indirectly by the trap below
 cleanup() {
   rm -rf "$TMP_DIR"
 }
@@ -154,8 +157,19 @@ if [ "$DRY_RUN" -eq 1 ]; then
   say "[dry-run] Would download: ${BIN_URL}"
   say "[dry-run] Would verify with: ${SUM_URL}"
   say "[dry-run] Would install to: ${INSTALL_DIR}/cardbot"
+  say "[dry-run] Would record install at: ${INSTALL_RECORD}"
   exit 0
 fi
+
+record_install() {
+  installed_path="$1"
+  mkdir -p "$STATE_DIR"
+  chmod 700 "$STATE_DIR"
+  record_tmp="${INSTALL_RECORD}.tmp.$$"
+  printf '%s\n' "$installed_path" >"$record_tmp"
+  chmod 600 "$record_tmp"
+  mv "$record_tmp" "$INSTALL_RECORD"
+}
 
 say "==> Downloading binary"
 curl -fsSL -o "$BIN_PATH" "$BIN_URL"
@@ -180,6 +194,7 @@ install_to_dir() {
   target_bin="${target_dir}/cardbot"
   mkdir -p "$target_dir"
   install -m 755 "$BIN_PATH" "$target_bin"
+  record_install "$target_bin" || say "Warning: could not record install path at ${INSTALL_RECORD}"
   say "==> Installed: ${target_bin}"
   "$target_bin" --version || true
   case ":$PATH:" in
@@ -206,6 +221,7 @@ fi
 if [ "$NO_SUDO" -eq 0 ] && command -v sudo >/dev/null 2>&1; then
   say "==> ${INSTALL_DIR} requires elevated permissions; attempting sudo install"
   if sudo mkdir -p "$INSTALL_DIR" && sudo install -m 755 "$BIN_PATH" "${INSTALL_DIR}/cardbot"; then
+    record_install "${INSTALL_DIR}/cardbot" || say "Warning: could not record install path at ${INSTALL_RECORD}"
     say "==> Installed: ${INSTALL_DIR}/cardbot"
     "${INSTALL_DIR}/cardbot" --version || true
     exit 0

@@ -2,6 +2,7 @@
 package cblog
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,6 +18,7 @@ type Logger struct {
 	path    string
 	f       *os.File
 	written int64 // bytes written since open, avoids Stat() on every line
+	lastErr error // most recent persistent write/rotation error
 }
 
 // Open opens (or creates) the log file at path.
@@ -57,13 +59,22 @@ func (l *Logger) Raw(line string) {
 }
 
 // Close flushes and closes the log file.
-func (l *Logger) Close() {
+func (l *Logger) Close() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	var closeErr error
 	if l.f != nil {
-		_ = l.f.Close()
+		closeErr = l.f.Close()
 		l.f = nil
 	}
+	return errors.Join(l.lastErr, closeErr)
+}
+
+// Err returns the most recent logging error, if any.
+func (l *Logger) Err() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.lastErr
 }
 
 // writeLineLocked writes a single line while holding l.mu.
@@ -81,6 +92,7 @@ func (l *Logger) writeLineLocked(line string) {
 
 	n, err := l.f.WriteString(line)
 	if err != nil {
+		l.lastErr = err
 		return
 	}
 	l.written += int64(n)
@@ -89,11 +101,16 @@ func (l *Logger) writeLineLocked(line string) {
 // rotate renames the current log to .old and opens a fresh file.
 func (l *Logger) rotate() {
 	if l.f != nil {
-		_ = l.f.Close()
+		if err := l.f.Close(); err != nil {
+			l.lastErr = err
+		}
 	}
-	_ = os.Rename(l.path, l.path+".old")
+	if err := os.Rename(l.path, l.path+".old"); err != nil && !os.IsNotExist(err) {
+		l.lastErr = err
+	}
 	f, err := os.OpenFile(l.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
+		l.lastErr = err
 		l.f = nil
 		return
 	}

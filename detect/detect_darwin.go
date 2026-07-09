@@ -1,4 +1,4 @@
-//go:build darwin && cgo
+//go:build darwin && cgo && cardbot_native
 
 package detect
 
@@ -41,10 +41,13 @@ static char* getVolumeName(DADiskRef disk) {
     CFStringRef name = CFDictionaryGetValue(desc, kDADiskDescriptionVolumeNameKey);
     char* result = NULL;
     if (name != NULL) {
-        CFIndex len = CFStringGetLength(name) + 1;
-        result = malloc(len);
-        if (result != NULL) {
-            CFStringGetCString(name, result, len, kCFStringEncodingUTF8);
+		CFIndex len = CFStringGetMaximumSizeForEncoding(CFStringGetLength(name), kCFStringEncodingUTF8) + 1;
+		result = calloc(1, len);
+		if (result != NULL) {
+			if (!CFStringGetCString(name, result, len, kCFStringEncodingUTF8)) {
+				free(result);
+				result = NULL;
+			}
         }
     }
     CFRelease(desc);
@@ -56,19 +59,6 @@ static void registerCallbacks(DASessionRef session) {
     DARegisterDiskDisappearedCallback(session, NULL, diskDisappearedCallback, NULL);
 }
 
-static int ejectDisk(DASessionRef session, const char* path) {
-    CFURLRef url = CFURLCreateFromFileSystemRepresentation(kCFAllocatorDefault, (UInt8*)path, strlen(path), true);
-    if (url == NULL) return -1;
-
-    DADiskRef disk = DADiskCreateFromVolumePath(kCFAllocatorDefault, session, url);
-    CFRelease(url);
-    if (disk == NULL) return -1;
-
-    DADiskEject(disk, kDADiskEjectOptionDefault, NULL, NULL);
-    CFRelease(disk);
-    return 0;
-}
-
 static void scheduleOnRunLoop(DASessionRef session, CFRunLoopRef runLoop) {
     DASessionScheduleWithRunLoop(session, runLoop, kCFRunLoopDefaultMode);
 }
@@ -77,6 +67,7 @@ import "C"
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sync"
@@ -98,6 +89,7 @@ type Detector struct {
 	removals chan string
 	mu       sync.RWMutex
 	started  bool
+	wg       sync.WaitGroup
 }
 
 // NewDetector creates a new card detector.
@@ -119,11 +111,17 @@ func (d *Detector) Start() error {
 	}
 
 	detectorMu.Lock()
+	if globalDetector != nil {
+		detectorMu.Unlock()
+		return fmt.Errorf("another native detector is already active")
+	}
 	globalDetector = d
 	detectorMu.Unlock()
 
 	ready := make(chan error, 1)
+	d.wg.Add(1)
 	go func() {
+		defer d.wg.Done()
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
 
@@ -153,6 +151,12 @@ func (d *Detector) Start() error {
 		// Scan volumes already mounted at startup; native callbacks handle future events.
 		go d.scanExistingVolumes()
 		C.CFRunLoopRun()
+		C.DASessionUnscheduleFromRunLoop(session, runLoop, C.kCFRunLoopDefaultMode)
+		C.CFRelease(C.CFTypeRef(session))
+		d.mu.Lock()
+		d.session = 0
+		d.runLoop = 0
+		d.mu.Unlock()
 	}()
 
 	return <-ready
@@ -167,16 +171,12 @@ func (d *Detector) Stop() {
 	}
 	d.started = false
 	runLoop := d.runLoop
-	session := d.session
 	d.mu.Unlock()
 
 	if runLoop != 0 {
 		C.CFRunLoopStop(runLoop)
 	}
-	if session != 0 {
-		C.DASessionUnscheduleFromRunLoop(session, runLoop, C.kCFRunLoopDefaultMode)
-		C.CFRelease(C.CFTypeRef(session))
-	}
+	d.wg.Wait()
 
 	detectorMu.Lock()
 	globalDetector = nil
@@ -191,20 +191,9 @@ func (d *Detector) Removals() <-chan string { return d.removals }
 
 // Eject fully ejects the volume at the given path (unmount + release hardware).
 func (d *Detector) Eject(path string) error {
-	d.mu.RLock()
-	session := d.session
-	d.mu.RUnlock()
-
-	if session == 0 {
-		return fmt.Errorf("detector not started")
-	}
-
-	cPath := C.CString(path)
-	defer C.free(unsafe.Pointer(cPath))
-
-	result := C.ejectDisk(session, cPath)
-	if result != 0 {
-		return fmt.Errorf("failed to eject %s", path)
+	cmd := exec.Command("diskutil", "eject", path)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to eject %s: %w", path, err)
 	}
 	return nil
 }

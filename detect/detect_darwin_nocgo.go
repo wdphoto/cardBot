@@ -1,4 +1,4 @@
-//go:build darwin && !cgo
+//go:build darwin && (!cgo || !cardbot_native)
 
 package detect
 
@@ -42,6 +42,7 @@ func (d *Detector) Start() error {
 		return fmt.Errorf("detector already started")
 	}
 
+	d.stopChan = make(chan struct{})
 	d.started = true
 	d.wg.Add(1)
 	go d.pollLoop()
