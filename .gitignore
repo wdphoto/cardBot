@@ -72,6 +72,9 @@ temp/
 # pi agent specific
 .pi/
 
+# Project-local agent skills
+.agents/
+
 # Local config files that shouldn't be committed
 config.local.json
 config.local.*
