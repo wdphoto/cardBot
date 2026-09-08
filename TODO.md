@@ -52,7 +52,15 @@ This is the concise project backlog. Rationale, evidence, and acceptance guidanc
 ## Checkpoint CI follow-up
 
 - [x] Raise the minimum Go version and CI/release pins to 1.26.8, the current supported 1.26 patch release. Checkpoint CI on 1.26.5 found reachable standard-library vulnerabilities GO-2026-6218, GO-2026-6090, GO-2026-5972, and GO-2026-5026 (fixed in 1.26.6); keep vulnerability scanning enabled.
-- [ ] Refresh pinned GitHub Actions for native Node.js 24 compatibility. Checkpoint CI warns that current pins are being forced from Node.js 20 to 24; verify upstream action metadata before changing pins.
+- [x] Refresh pinned GitHub Actions for native Node.js 24 compatibility in CI and release workflows. Verify upstream release SHAs, action runtimes (including nested attestation), artifact defaults, and runner requirements; retain existing permissions and disable optional registry storage records.
+
+## Isolated daemon/login QA
+
+- [x] Give every running daemon test a private PID path and fake detector; replace unbounded waits and sleep-based ordering with bounded startup/shutdown and synchronized events.
+- [x] Exercise SIGINT/SIGTERM shutdown, PID cleanup, singleton rejection/reacquisition, exact callback paths, duplicate suppression, reinsertions, and failed startup cleanup. Fail closed when the singleton state path cannot be resolved or created.
+- [x] Validate saved configuration before headless startup can prompt, log, detect, or autosave; reject `--daemon` with `--setup`/`--reset`. Preserve malformed, unsupported, and unreadable configuration during daemon preference changes.
+- [x] Exercise login plist install/status/uninstall and launch failures with temporary homes and fake launchctl commands. XML-escape executable paths without losing significant whitespace.
+- Validation command: `go test -race ./daemon ./launch ./instance ./cmd -count=1`. No live LaunchAgent installation, terminal launch, card writes, or ejects are part of this QA; real login/launchd behavior remains hardware/manual QA.
 
 ## Manual release QA
 

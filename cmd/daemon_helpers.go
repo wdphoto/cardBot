@@ -11,6 +11,15 @@ import (
 	"github.com/wdphoto/cardBot/term"
 )
 
+// validateDaemonConfig keeps headless startup out of interactive setup and
+// prevents a broken saved configuration from silently becoming defaults.
+func validateDaemonConfig(path string, status config.LoadStatus) error {
+	if path == "" || status != config.LoadValid {
+		return fmt.Errorf("daemon requires a valid saved config at %q; run cardbot --setup interactively, or repair the existing config first", path)
+	}
+	return nil
+}
+
 func normalizeDaemonTerminalAppForLaunch(name string) string {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -143,7 +152,7 @@ func updateSavedDaemonPrefs(mutator func(cfg *config.Config)) {
 	cfg, _, status, err := config.LoadWithStatus(cfgPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not load config to update daemon preferences: %v\n", err)
-		cfg = config.Defaults()
+		return
 	}
 	if cfg == nil {
 		cfg = config.Defaults()

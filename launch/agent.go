@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"os"
@@ -137,6 +138,8 @@ func plistPath(home string) string {
 }
 
 func renderPlist(binaryPath string) string {
+	var escaped strings.Builder
+	_ = xml.EscapeText(&escaped, []byte(binaryPath)) // strings.Builder writes cannot fail.
 	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -154,7 +157,7 @@ func renderPlist(binaryPath string) string {
     <true/>
 </dict>
 </plist>
-`, label, binaryPath)
+`, label, escaped.String())
 }
 
 func runCommand(name string, args ...string) error {

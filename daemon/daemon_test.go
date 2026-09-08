@@ -3,436 +3,355 @@ package daemon
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"strconv"
-	"strings"
-	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/wdphoto/cardBot/detect"
 )
 
-// ---------------------------------------------------------------------------
-// fakeDetector — same pattern as app/state_test.go
-// ---------------------------------------------------------------------------
-
+// All daemon tests inject detection and PID paths. No test watches real cards
+// or writes the user's daemon state, even when several tests run in parallel.
 type fakeDetector struct {
 	startErr error
-	started  atomic.Bool
+	started  chan struct{}
 	stopped  atomic.Bool
 	events   chan *detect.Card
 	removals chan string
 }
 
-func TestDaemon_RejectsConcurrentInstance(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	pidPath := dir + "/cardbot.pid"
-	fd1 := newFakeDetector()
-	d1 := New(Config{
-		newDetector:      func() detector { return fd1 },
-		pidPathFn:        func() (string, error) { return pidPath, nil },
-		enforceSingleton: true,
-	})
-	done := make(chan error, 1)
-	go func() { done <- d1.Run() }()
-	for !fd1.started.Load() {
-		time.Sleep(5 * time.Millisecond)
-	}
-
-	d2 := New(Config{
-		newDetector:      func() detector { return newFakeDetector() },
-		pidPathFn:        func() (string, error) { return pidPath, nil },
-		enforceSingleton: true,
-	})
-	if err := d2.Run(); !errors.Is(err, ErrAlreadyRunning) {
-		t.Fatalf("second Run() error = %v, want ErrAlreadyRunning", err)
-	}
-	d1.sigChan <- os.Interrupt
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
-}
-
 func newFakeDetector() *fakeDetector {
 	return &fakeDetector{
-		events:   make(chan *detect.Card, 10),
-		removals: make(chan string, 10),
+		started:  make(chan struct{}),
+		events:   make(chan *detect.Card),
+		removals: make(chan string),
 	}
 }
 
-func (f *fakeDetector) Start() error {
-	f.started.Store(true)
-	return f.startErr
-}
+func (f *fakeDetector) Start() error                { close(f.started); return f.startErr }
 func (f *fakeDetector) Stop()                       { f.stopped.Store(true) }
 func (f *fakeDetector) Events() <-chan *detect.Card { return f.events }
 func (f *fakeDetector) Removals() <-chan string     { return f.removals }
-func (f *fakeDetector) Eject(path string) error     { return nil }
-func (f *fakeDetector) Remove(path string)          {}
+func (f *fakeDetector) Eject(string) error          { panic("daemon must not eject cards") }
+func (f *fakeDetector) Remove(string)               { panic("daemon must not remove cards") }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
+func newTestDaemon(t *testing.T, cfg Config) *Daemon {
+	t.Helper()
+	if cfg.pidPathFn == nil {
+		path := filepath.Join(t.TempDir(), "cardbot.pid")
+		cfg.pidPathFn = func() (string, error) { return path, nil }
+	}
+	if cfg.newDetector == nil {
+		cfg.newDetector = func() detector { return newFakeDetector() }
+	}
+	cfg.enforceSingleton = true
+	return New(cfg)
+}
+
+// startTestDaemon provides bounded startup/shutdown and cleanup on assertion
+// failure. Closing done synchronizes access to runErr and callback results.
+func startTestDaemon(t *testing.T, d *Daemon, fd *fakeDetector) func(os.Signal) {
+	t.Helper()
+	done := make(chan struct{})
+	var runErr error
+	go func() { defer close(done); runErr = d.Run() }()
+	stop := func(sig os.Signal) {
+		t.Helper()
+		select {
+		case <-done:
+		default:
+			select {
+			case d.sigChan <- sig:
+			default:
+			}
+			select {
+			case <-done:
+			case <-time.After(3 * time.Second):
+				t.Fatal("daemon did not shut down")
+			}
+		}
+		if runErr != nil {
+			t.Fatalf("Run(): %v", runErr)
+		}
+		if !fd.stopped.Load() {
+			t.Error("detector Stop was not called")
+		}
+	}
+	t.Cleanup(func() { stop(os.Interrupt) })
+	select {
+	case <-fd.started:
+	case <-done:
+		t.Fatalf("Run exited before startup: %v", runErr)
+	case <-time.After(3 * time.Second):
+		t.Fatal("detector did not start")
+	}
+	return stop
+}
+
+func sendCard(t *testing.T, fd *fakeDetector, path string) {
+	t.Helper()
+	select {
+	case fd.events <- &detect.Card{Path: path, Name: "synthetic card"}:
+	case <-time.After(3 * time.Second):
+		t.Fatal("card event was not received")
+	}
+}
+
+func sendRemoval(t *testing.T, fd *fakeDetector, path string) {
+	t.Helper()
+	select {
+	case fd.removals <- path:
+	case <-time.After(3 * time.Second):
+		t.Fatal("removal event was not received")
+	}
+}
 
 func TestDaemon_StartsDetectorAndWaitsForSignal(t *testing.T) {
+	for _, sig := range []os.Signal{os.Interrupt, syscall.SIGTERM} {
+		t.Run(sig.String(), func(t *testing.T) {
+			t.Parallel()
+			fd := newFakeDetector()
+			d := newTestDaemon(t, Config{newDetector: func() detector { return fd }})
+			stop := startTestDaemon(t, d, fd)
+			stop(sig)
+		})
+	}
+}
+
+func TestDaemon_RejectsConcurrentInstance(t *testing.T) {
 	t.Parallel()
-
-	fd := newFakeDetector()
-	d := New(Config{
-		newDetector:    func() detector { return fd },
-		OnCardInserted: func(path string) {},
-	})
-
-	done := make(chan error, 1)
-	go func() { done <- d.Run() }()
-
-	// Wait for detector to start.
-	deadline := time.After(2 * time.Second)
-	for !fd.started.Load() {
-		select {
-		case <-deadline:
-			t.Fatal("detector Start() was not called")
-		default:
-			time.Sleep(10 * time.Millisecond)
-		}
+	pidPath := filepath.Join(t.TempDir(), "cardbot.pid")
+	cfg := Config{pidPathFn: func() (string, error) { return pidPath, nil }}
+	fd1 := newFakeDetector()
+	cfg.newDetector = func() detector { return fd1 }
+	d1 := newTestDaemon(t, cfg)
+	stop := startTestDaemon(t, d1, fd1)
+	before, err := os.ReadFile(pidPath)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	// Shut down.
-	d.sigChan <- os.Interrupt
-
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("Run() error = %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("Run() did not exit on signal")
+	cfg.newDetector = func() detector { t.Fatal("contender must not create a detector"); return nil }
+	if err := newTestDaemon(t, cfg).Run(); !errors.Is(err, ErrAlreadyRunning) {
+		t.Fatalf("contender error = %v, want ErrAlreadyRunning", err)
 	}
-
-	if !fd.stopped.Load() {
-		t.Fatal("detector Stop() was not called")
+	after, err := os.ReadFile(pidPath)
+	if err != nil || string(after) != string(before) {
+		t.Fatalf("contender changed owner's PID file: %q, %v", after, err)
 	}
+	stop(os.Interrupt)
+
+	// A subsequent daemon can acquire the same lifetime lock after shutdown.
+	fd2 := newFakeDetector()
+	cfg.newDetector = func() detector { return fd2 }
+	stop2 := startTestDaemon(t, newTestDaemon(t, cfg), fd2)
+	stop2(syscall.SIGTERM)
 }
 
 func TestDaemon_CallsOnCardInserted_WhenCardDetected(t *testing.T) {
 	t.Parallel()
-
 	fd := newFakeDetector()
-
-	var mu sync.Mutex
-	var insertedPaths []string
-
-	d := New(Config{
-		newDetector: func() detector { return fd },
-		OnCardInserted: func(path string) {
-			mu.Lock()
-			insertedPaths = append(insertedPaths, path)
-			mu.Unlock()
-		},
+	var paths []string
+	d := newTestDaemon(t, Config{
+		newDetector:    func() detector { return fd },
+		OnCardInserted: func(path string) { paths = append(paths, path) },
 	})
-
-	done := make(chan error, 1)
-	go func() { done <- d.Run() }()
-
-	// Wait for detector to start.
-	for !fd.started.Load() {
-		time.Sleep(10 * time.Millisecond)
+	stop := startTestDaemon(t, d, fd)
+	// Exact mount whitespace must survive the daemon callback too.
+	want := filepath.Join(t.TempDir(), "CARD  ")
+	sendCard(t, fd, want)
+	stop(os.Interrupt)
+	if len(paths) != 1 || paths[0] != want {
+		t.Fatalf("callbacks = %q, want [%q]", paths, want)
 	}
-
-	// Send a card event.
-	fd.events <- &detect.Card{Path: "/Volumes/NIKON Z 9", Name: "NIKON Z 9"}
-
-	// Wait for callback.
-	deadline := time.After(2 * time.Second)
-	for {
-		mu.Lock()
-		n := len(insertedPaths)
-		mu.Unlock()
-		if n > 0 {
-			break
-		}
-		select {
-		case <-deadline:
-			t.Fatal("OnCardInserted was not called")
-		default:
-			time.Sleep(10 * time.Millisecond)
-		}
-	}
-
-	mu.Lock()
-	if len(insertedPaths) != 1 || insertedPaths[0] != "/Volumes/NIKON Z 9" {
-		t.Fatalf("insertedPaths = %v, want [\"/Volumes/NIKON Z 9\"]", insertedPaths)
-	}
-	mu.Unlock()
-
-	d.sigChan <- os.Interrupt
-	<-done
 }
 
 func TestDaemon_TracksCards_NoDuplicateCallbacks(t *testing.T) {
 	t.Parallel()
-
 	fd := newFakeDetector()
-
-	var mu sync.Mutex
-	callCount := 0
-
-	d := New(Config{
-		newDetector: func() detector { return fd },
-		OnCardInserted: func(path string) {
-			mu.Lock()
-			callCount++
-			mu.Unlock()
-		},
+	calls := 0
+	d := newTestDaemon(t, Config{
+		newDetector:    func() detector { return fd },
+		OnCardInserted: func(string) { calls++ },
 	})
-
-	done := make(chan error, 1)
-	go func() { done <- d.Run() }()
-
-	for !fd.started.Load() {
-		time.Sleep(10 * time.Millisecond)
+	stop := startTestDaemon(t, d, fd)
+	path := filepath.Join(t.TempDir(), "CARD")
+	sendCard(t, fd, path)
+	sendCard(t, fd, path)
+	stop(os.Interrupt)
+	if calls != 1 {
+		t.Fatalf("callbacks = %d, want 1", calls)
 	}
-
-	// Send the same card twice.
-	fd.events <- &detect.Card{Path: "/Volumes/CARD", Name: "CARD"}
-	time.Sleep(100 * time.Millisecond)
-	fd.events <- &detect.Card{Path: "/Volumes/CARD", Name: "CARD"}
-	time.Sleep(100 * time.Millisecond)
-
-	mu.Lock()
-	got := callCount
-	mu.Unlock()
-
-	if got != 1 {
-		t.Fatalf("OnCardInserted called %d times, want 1 (duplicate should be ignored)", got)
-	}
-
-	d.sigChan <- os.Interrupt
-	<-done
 }
 
 func TestDaemon_CardRemoval_AllowsReinsertCallback(t *testing.T) {
 	t.Parallel()
-
 	fd := newFakeDetector()
-
-	var mu sync.Mutex
-	callCount := 0
-
-	d := New(Config{
-		newDetector:       func() detector { return fd },
-		DuplicateCooldown: 50 * time.Millisecond,
-		OnCardInserted: func(path string) {
-			mu.Lock()
-			callCount++
-			mu.Unlock()
-		},
-	})
-
-	done := make(chan error, 1)
-	go func() { done <- d.Run() }()
-
-	for !fd.started.Load() {
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	// Insert card.
-	fd.events <- &detect.Card{Path: "/Volumes/CARD", Name: "CARD"}
-	time.Sleep(100 * time.Millisecond)
-
-	// Remove card.
-	fd.removals <- "/Volumes/CARD"
-	time.Sleep(100 * time.Millisecond)
-
-	// Re-insert same card — should fire callback again.
-	fd.events <- &detect.Card{Path: "/Volumes/CARD", Name: "CARD"}
-	time.Sleep(100 * time.Millisecond)
-
-	mu.Lock()
-	got := callCount
-	mu.Unlock()
-
-	if got != 2 {
-		t.Fatalf("OnCardInserted called %d times, want 2 (after removal + re-insert)", got)
-	}
-
-	d.sigChan <- os.Interrupt
-	<-done
-}
-
-func TestDaemon_DetectorStartError_ReturnsError(t *testing.T) {
-	t.Parallel()
-
-	fd := newFakeDetector()
-	fd.startErr = os.ErrPermission
-
-	d := New(Config{
+	var clock atomic.Int64
+	callbacks := make(chan string, 2)
+	d := newTestDaemon(t, Config{
 		newDetector:    func() detector { return fd },
-		OnCardInserted: func(path string) {},
+		now:            func() time.Time { return time.Unix(clock.Load(), 0) },
+		OnCardInserted: func(path string) { callbacks <- path },
 	})
-
-	err := d.Run()
-	if err == nil {
-		t.Fatal("expected error when detector fails to start")
+	stop := startTestDaemon(t, d, fd)
+	path := filepath.Join(t.TempDir(), "CARD")
+	sendCard(t, fd, path)
+	select {
+	case <-callbacks:
+	case <-time.After(3 * time.Second):
+		t.Fatal("first callback missing")
+	}
+	sendRemoval(t, fd, path)
+	clock.Store(10) // Beyond the cooldown, without wall-clock sleeps.
+	sendCard(t, fd, path)
+	stop(os.Interrupt)
+	if len(callbacks) != 1 {
+		t.Fatal("reinsert callback missing")
 	}
 }
 
 func TestDaemon_MultipleCards_EachGetsCallback(t *testing.T) {
 	t.Parallel()
-
 	fd := newFakeDetector()
-
-	var mu sync.Mutex
 	var paths []string
-
-	d := New(Config{
-		newDetector: func() detector { return fd },
-		OnCardInserted: func(path string) {
-			mu.Lock()
-			paths = append(paths, path)
-			mu.Unlock()
-		},
+	d := newTestDaemon(t, Config{
+		newDetector:    func() detector { return fd },
+		OnCardInserted: func(path string) { paths = append(paths, path) },
 	})
-
-	done := make(chan error, 1)
-	go func() { done <- d.Run() }()
-
-	for !fd.started.Load() {
-		time.Sleep(10 * time.Millisecond)
+	stop := startTestDaemon(t, d, fd)
+	base := t.TempDir()
+	a, b := filepath.Join(base, "A"), filepath.Join(base, "B")
+	sendCard(t, fd, a)
+	sendCard(t, fd, b)
+	stop(os.Interrupt)
+	if len(paths) != 2 || paths[0] != a || paths[1] != b {
+		t.Fatalf("callbacks = %q", paths)
 	}
-
-	fd.events <- &detect.Card{Path: "/Volumes/CARD_A", Name: "CARD_A"}
-	fd.events <- &detect.Card{Path: "/Volumes/CARD_B", Name: "CARD_B"}
-	time.Sleep(200 * time.Millisecond)
-
-	mu.Lock()
-	got := len(paths)
-	mu.Unlock()
-
-	if got != 2 {
-		t.Fatalf("OnCardInserted called %d times, want 2", got)
-	}
-
-	d.sigChan <- os.Interrupt
-	<-done
 }
 
 func TestDaemon_Cooldown_SuppressesRapidReinsert(t *testing.T) {
-	now := time.Date(2026, 3, 18, 12, 0, 0, 0, time.UTC)
+	t.Parallel()
+	now := time.Unix(0, 0)
 	calls := 0
-	d := New(Config{
-		DuplicateCooldown: 5 * time.Second,
-		now:               func() time.Time { return now },
-		OnCardInserted: func(path string) {
-			calls++
-		},
+	d := newTestDaemon(t, Config{
+		now:            func() time.Time { return now },
+		OnCardInserted: func(string) { calls++ },
 	})
-
-	card := &detect.Card{Path: "/Volumes/CARD", Name: "CARD"}
+	card := &detect.Card{Path: filepath.Join(t.TempDir(), "CARD")}
 	d.handleCard(card)
 	d.handleRemoval(card.Path)
-
 	now = now.Add(2 * time.Second)
 	d.handleCard(card)
 	if calls != 1 {
-		t.Fatalf("calls = %d, want 1 (suppressed by cooldown)", calls)
+		t.Fatalf("callbacks during cooldown = %d, want 1", calls)
 	}
-
 	now = now.Add(4 * time.Second)
 	d.handleCard(card)
 	if calls != 2 {
-		t.Fatalf("calls = %d, want 2 (cooldown elapsed)", calls)
+		t.Fatalf("callbacks after cooldown = %d, want 2", calls)
 	}
 }
 
 func TestDaemon_PIDFile_WrittenAndRemoved(t *testing.T) {
 	t.Parallel()
-
-	tmpDir, err := os.MkdirTemp("", "cardbot-daemon-pid-test")
-	if err != nil {
-		t.Fatalf("creating temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	pidPath := tmpDir + "/cardbot.pid"
-
 	fd := newFakeDetector()
-	d := New(Config{
-		newDetector:    func() detector { return fd },
-		OnCardInserted: func(path string) {},
-		pidPathFn:      func() (string, error) { return pidPath, nil },
-	})
-
-	done := make(chan error, 1)
-	go func() { done <- d.Run() }()
-
-	// Wait for detector to start.
-	for !fd.started.Load() {
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	// PID file should exist while daemon is running.
-	pidData, err := os.ReadFile(pidPath)
+	d := newTestDaemon(t, Config{newDetector: func() detector { return fd }})
+	stop := startTestDaemon(t, d, fd)
+	data, err := os.ReadFile(d.pidPath)
 	if err != nil {
-		t.Fatalf("PID file not found while daemon running: %v", err)
+		t.Fatal(err)
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(pidData)))
-	if err != nil || pid <= 0 {
-		t.Fatalf("PID file contains invalid data: %s", string(pidData))
+	if string(data) != strconv.Itoa(os.Getpid()) {
+		t.Fatalf("PID contents = %q", data)
 	}
-
-	// Shut down daemon.
-	d.sigChan <- os.Interrupt
-
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("Run() error = %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("Run() did not exit on signal")
+	stop(syscall.SIGTERM)
+	if _, err := os.Stat(d.pidPath); !os.IsNotExist(err) {
+		t.Fatalf("PID file remains after shutdown: %v", err)
 	}
+}
 
-	// PID file should be removed after daemon exits.
-	if _, err := os.Stat(pidPath); !os.IsNotExist(err) {
-		t.Fatalf("PID file should be removed after daemon exits, stat error: %v", err)
+func TestDaemon_DetectorStartError_ReturnsError(t *testing.T) {
+	t.Parallel()
+	fd := newFakeDetector()
+	fd.startErr = os.ErrPermission
+	d := newTestDaemon(t, Config{newDetector: func() detector { return fd }})
+	if err := d.Run(); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("Run error = %v", err)
+	}
+	if _, err := os.Stat(d.pidPath); !os.IsNotExist(err) {
+		t.Fatalf("PID file remains after failed startup: %v", err)
+	}
+	lock, err := acquireProcessLock(d.pidPath + ".lock")
+	if err != nil {
+		t.Fatalf("failed startup retained lock: %v", err)
+	}
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDaemon_RequiresSingletonStatePath(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"empty", nil}, {"lookup error", os.ErrNotExist},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newTestDaemon(t, Config{
+				pidPathFn:   func() (string, error) { return "", tc.err },
+				newDetector: func() detector { t.Fatal("must not start without singleton state"); return nil },
+			})
+			err := d.Run()
+			if err == nil {
+				t.Fatal("expected PID path error")
+			}
+			if tc.err != nil && !errors.Is(err, tc.err) {
+				t.Fatalf("Run error = %v, want wrapped %v", err, tc.err)
+			}
+		})
+	}
+}
+
+func TestDaemon_UnavailableStateDirectoryFailsBeforeDetection(t *testing.T) {
+	t.Parallel()
+	blocker := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(blocker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d := newTestDaemon(t, Config{
+		pidPathFn:   func() (string, error) { return filepath.Join(blocker, "cardbot.pid"), nil },
+		newDetector: func() detector { t.Fatal("must not detect without singleton lock"); return nil },
+	})
+	if err := d.Run(); err == nil {
+		t.Fatal("expected state directory error")
 	}
 }
 
 func TestDaemon_PIDFile_UnavailablePath_NoError(t *testing.T) {
 	t.Parallel()
-
-	// Use a path that cannot be created.
-	pidPath := "/nonexistent/path/cardbot.pid"
-
-	fd := newFakeDetector()
-	d := New(Config{
-		newDetector:    func() detector { return fd },
-		OnCardInserted: func(path string) {},
-		pidPathFn:      func() (string, error) { return pidPath, nil },
-	})
-
-	done := make(chan error, 1)
-	go func() { done <- d.Run() }()
-
-	// Wait for detector to start.
-	for !fd.started.Load() {
-		time.Sleep(10 * time.Millisecond)
+	blocker := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(blocker, nil, 0o600); err != nil {
+		t.Fatal(err)
 	}
+	fd := newFakeDetector()
+	// Only injected, non-singleton test daemons may run without a PID file.
+	d := New(Config{
+		newDetector: func() detector { return fd },
+		pidPathFn:   func() (string, error) { return filepath.Join(blocker, "cardbot.pid"), nil },
+	})
+	stop := startTestDaemon(t, d, fd)
+	stop(os.Interrupt)
+}
 
-	// Daemon should still run despite PID file error.
-	_ = fd
-
-	d.sigChan <- os.Interrupt
-
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("Run() error = %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("Run() did not exit on signal")
+func TestNew_ProductionEnforcesSingleton(t *testing.T) {
+	d := New(Config{pidPathFn: func() (string, error) { return filepath.Join(t.TempDir(), "cardbot.pid"), nil }})
+	if !d.enforceSingleton {
+		t.Fatal("production daemon must enforce singleton")
 	}
 }

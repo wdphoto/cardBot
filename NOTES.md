@@ -165,6 +165,8 @@ Self-update downloads the latest matching release asset and verifies SHA256 chec
 
 ## Daemon Mode
 
+Complete `cardbot --setup` interactively before starting the daemon or installing login auto-start. Daemon startup requires a valid saved configuration and an available singleton state directory; it fails instead of opening setup or silently using defaults for broken configuration. `--daemon` cannot be combined with `--setup` or `--reset`.
+
 Run daemon mode:
 
 ```bash

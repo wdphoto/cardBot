@@ -68,6 +68,7 @@ type Daemon struct {
 	duplicateCooldown time.Duration
 	now               func() time.Time
 	pidPath           string
+	pidPathErr        error
 	mu                sync.Mutex
 	sigChan           chan os.Signal
 	enforceSingleton  bool
@@ -95,7 +96,7 @@ func New(c Config) *Daemon {
 	if pidPathFn == nil {
 		pidPathFn = PidPath
 	}
-	pidPath, _ := pidPathFn() // Ignore error; Run() will handle it
+	pidPath, pidPathErr := pidPathFn() // Run reports errors before starting detection.
 
 	sigChan := make(chan os.Signal, 1)
 	enforceSingleton := c.enforceSingleton || c.newDetector == nil
@@ -108,6 +109,7 @@ func New(c Config) *Daemon {
 		duplicateCooldown: cooldown,
 		now:               now,
 		pidPath:           pidPath,
+		pidPathErr:        pidPathErr,
 		sigChan:           sigChan,
 		enforceSingleton:  enforceSingleton,
 	}
@@ -124,6 +126,15 @@ func PidPath() (string, error) {
 
 // Run starts the daemon event loop. It blocks until SIGINT/SIGTERM.
 func (d *Daemon) Run() error {
+	if d.enforceSingleton {
+		if d.pidPathErr != nil {
+			return fmt.Errorf("resolving daemon PID path: %w", d.pidPathErr)
+		}
+		if d.pidPath == "" {
+			return errors.New("daemon PID path is required for singleton enforcement")
+		}
+	}
+
 	signal.Notify(d.sigChan, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(d.sigChan)
 

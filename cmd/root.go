@@ -130,6 +130,8 @@ func NewRootCommand(info BuildInfo) *cobra.Command {
 	flags.BoolVar(&opts.Daemon, "daemon", false, "run as background daemon watching for cards")
 	flags.StringVar(&opts.TargetPathB64, "target-path-b64", "", "internal: base64-encoded target card path")
 	_ = flags.MarkHidden("target-path-b64")
+	root.MarkFlagsMutuallyExclusive("daemon", "setup")
+	root.MarkFlagsMutuallyExclusive("daemon", "reset")
 	bindRootFlags(v, flags)
 
 	root.AddCommand(newSelfUpdateCommand(info))
@@ -272,11 +274,24 @@ func runInteractive(ctx context.Context, info BuildInfo, v *viper.Viper, flags *
 	if cfgPath != "" {
 		cfg, cfgWarnings, cfgStatus, err = config.LoadWithStatus(cfgPath)
 		if err != nil {
+			if opts.Daemon {
+				fmt.Fprintf(os.Stderr, "Error: could not load daemon config: %v\n", err)
+				return 1
+			}
 			fmt.Fprintf(os.Stderr, "Warning: %s — using defaults\n", term.FriendlyErr(err))
 			cfg = config.Defaults()
 		}
 	} else {
 		cfg = config.Defaults()
+	}
+
+	// A login daemon has no interactive setup session. Fail before prompts,
+	// logging, detection, or autosaves if its saved configuration is unusable.
+	if opts.Daemon {
+		if err := validateDaemonConfig(cfgPath, cfgStatus); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			return 1
+		}
 	}
 
 	applyConfigOverrides(cfg, v, flags)

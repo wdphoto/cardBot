@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Refresh SHA-pinned CI/release actions for native Node.js 24 without broadening workflow permissions.
+- Harden headless daemon startup, preserve unreadable daemon configuration, and correctly encode executable paths in login plists; add isolated daemon/login lifecycle QA.
 - Require Go 1.26.8+ and update CI/release toolchain pins to address standard-library vulnerabilities reported by checkpoint CI.
 - Standardize development builds on `0.10.0-dev` in `VERSION`, with `v0.10.0` reserved for the next release; prevent future release-version rollbacks without rewriting historical tags.
 - Support timestamp naming beyond 9,999 assets, including selective copies: sequence suffixes grow past four digits without rollover or changing existing mappings.
