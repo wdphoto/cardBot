@@ -39,6 +39,9 @@ type App struct {
 	scanCancel  context.CancelFunc // cancels the current displayCard goroutine
 	copyCancel  context.CancelFunc // cancels the active copy worker
 	copyRemoved bool               // active copy was cancelled by card removal
+	copyID      uint64             // monotonic id of the active copy worker (0 = none)
+	copySeq     uint64             // monotonic counter for copy ids
+	copyDone    chan copyOutcome   // copy workers report completion to the event loop
 	copyWG      sync.WaitGroup     // lets shutdown wait for the active copy worker
 	spinner     *spinner.Spinner   // scanner spinner
 	version     string             // app version for display and dotfile
@@ -106,6 +109,7 @@ func New(c Config) *App {
 		version:      c.Version,
 		phase:        phaseScanning,
 		targetPath:   normalizeCardPath(c.TargetPath),
+		copyDone:     make(chan copyOutcome, 1),
 		newDetector:  newDetector,
 		newAnalyzer:  newAnalyzer,
 		runCopy:      runCopy,
@@ -195,6 +199,9 @@ func (a *App) Run(ctx context.Context) error {
 
 		case input := <-a.inputChan:
 			a.handleInput(input)
+
+		case out := <-a.copyDone:
+			a.handleCopyDone(out)
 
 		case <-ctx.Done():
 			a.setPhase(phaseShuttingDown)

@@ -2,8 +2,17 @@
 
 package cardcopy
 
-import "golang.org/x/sys/unix"
+import (
+	"os"
 
-func commitNoReplace(src, dst string) error {
-	return unix.RenamexNp(src, dst, unix.RENAME_EXCL)
+	"golang.org/x/sys/unix"
+)
+
+func commitNoReplace(root *os.Root, src, dst string) error {
+	dir, err := root.Open(".")
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return unix.RenameatxNp(int(dir.Fd()), src, int(dir.Fd()), dst, unix.RENAME_EXCL)
 }

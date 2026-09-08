@@ -44,7 +44,7 @@ func BenchmarkVerifyBytes64MiB(b *testing.B) {
 	b.SetBytes(int64(len(data) * 2))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := verifyBytes(src, dst, buf); err != nil {
+		if err := verifyTestFiles(src, dst, buf); err != nil {
 			b.Fatal(err)
 		}
 	}

@@ -3,7 +3,6 @@ package app
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/wdphoto/cardBot/analyze"
@@ -165,12 +164,11 @@ func (a *App) showHardwareInfo(card *detect.Card) {
 // cardIsReadOnly probes the card path for write access.
 // Returns true if a temp file cannot be created (write-protected card).
 func cardIsReadOnly(path string) bool {
-	probe := filepath.Join(path, ".cardbot_rw")
-	f, err := os.OpenFile(probe, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	f, err := os.CreateTemp(path, ".cardbot_rw-*")
 	if err != nil {
 		return true
 	}
-	f.Close()
-	os.Remove(probe)
-	return false
+	closeErr := f.Close()
+	removeErr := os.Remove(f.Name())
+	return closeErr != nil || removeErr != nil
 }

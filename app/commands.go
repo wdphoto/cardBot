@@ -8,7 +8,6 @@ import (
 
 	"github.com/wdphoto/cardBot/analyze"
 	"github.com/wdphoto/cardBot/cardcopy"
-	"github.com/wdphoto/cardBot/config"
 	"github.com/wdphoto/cardBot/detect"
 	"github.com/wdphoto/cardBot/dotfile"
 	"github.com/wdphoto/cardBot/fsutil"
@@ -17,25 +16,41 @@ import (
 
 const dryRunPreviewLimit = 200
 
-// copyFiltered runs one copy worker. App.Run remains the sole owner of detector,
-// removal, input, and shutdown events while this worker reports progress.
-func (a *App) copyFiltered(card *detect.Card, mode string) {
-	defer a.finishCopyPhase(card.Path)
-	destBase, err := config.ExpandPath(a.cfg.Destination.Path)
-	if err != nil {
-		fmt.Printf("\n%s Error: %s\n", a.TsPrefix(), term.FriendlyErr(err))
-		a.printPrompt()
-		return
-	}
+// copyOutcome reports the result of a copy worker to the event loop. The event
+// loop (App.Run) is the sole owner of copy lifecycle state: phase transitions,
+// copiedModes, copyCancel, and the next-card flow. id identifies the copy
+// session; outcomes whose id does not match the active copy are stale and are
+// ignored entirely.
+type copyOutcome struct {
+	id            uint64
+	cardPath      string
+	mode          string
+	destBase      string
+	result        *cardcopy.Result
+	err           error
+	isDryRun      bool
+	previewHidden int
+}
 
-	// Validate destination path.
-	if destBase == "" {
-		fmt.Printf("\n%s Error: no destination configured — run cardbot --setup\n", a.TsPrefix())
-		a.printPrompt()
-		return
-	}
-
+// copyFiltered runs one copy worker. It reports completion on a.copyDone and
+// returns; App.Run owns all lifecycle state changes. cancel is invoked on every
+// completion path so the copy context's parent resources are released.
+func (a *App) copyFiltered(ctx context.Context, cancel context.CancelFunc, card *detect.Card, mode, destBase string, analyzeResult *analyze.Result, copyID uint64) {
+	defer cancel()
 	isDryRun := a.dryRun
+
+	// If the copy was already cancelled before the worker ran (e.g. the card
+	// was removed immediately after the command), report the cancellation
+	// without touching the card: no permission probe, no source access.
+	if ctx.Err() != nil {
+		a.copyDone <- copyOutcome{
+			id:       copyID,
+			cardPath: card.Path,
+			mode:     mode,
+			err:      ctx.Err(),
+		}
+		return
+	}
 
 	// Warn if the card is write-protected — dotfile won't be written after copy.
 	// (Skip warning in dry-run since we're not writing anyway.)
@@ -69,25 +84,6 @@ func (a *App) copyFiltered(card *detect.Card, mode string) {
 		fmt.Printf("%s Press [\\] to cancel\n", a.TsPrefix())
 	}
 	a.logf("Copy %s starting: %s → %s", mode, card.Path, destBase)
-
-	a.mu.Lock()
-	analyzeResult := a.lastResult
-	if a.currentCard != nil && a.currentCard.Path == card.Path {
-		a.setPhaseLocked(phaseCopying)
-	}
-	a.mu.Unlock()
-	ctx, cancel := context.WithCancel(a.ctx)
-	defer cancel()
-	a.mu.Lock()
-	a.copyCancel = cancel
-	a.copyRemoved = false
-	a.mu.Unlock()
-	defer func() {
-		a.mu.Lock()
-		a.copyCancel = nil
-		a.copyRemoved = false
-		a.mu.Unlock()
-	}()
 
 	var filter func(relPath, ext string) bool
 	switch mode {
@@ -172,48 +168,95 @@ func (a *App) copyFiltered(card *detect.Card, mode string) {
 			a.logf("Copy warning: %s", w)
 		}
 	}
-	if errors.Is(copyErr, context.Canceled) {
-		copied := 0
-		if result != nil {
-			copied = result.FilesCopied
-		}
-		a.mu.Lock()
-		removed := a.copyRemoved
-		shuttingDown := a.phase == phaseShuttingDown
+
+	a.copyDone <- copyOutcome{
+		id:            copyID,
+		cardPath:      card.Path,
+		mode:          mode,
+		destBase:      destBase,
+		result:        result,
+		err:           copyErr,
+		isDryRun:      isDryRun,
+		previewHidden: previewHidden,
+	}
+}
+
+// handleCopyDone processes a copy worker's completion report. It runs in the
+// event loop, which is the sole owner of copy lifecycle state. Outcomes whose
+// id does not match the active copy are stale and are ignored entirely.
+func (a *App) handleCopyDone(out copyOutcome) {
+	a.mu.Lock()
+	if out.id == 0 || out.id != a.copyID {
+		// Stale outcome from a previous copy session — ignore entirely.
 		a.mu.Unlock()
-		a.printMu.Lock()
-		if removed {
+		return
+	}
+	sameCard := a.currentCard != nil && a.currentCard.Path == out.cardPath
+	// The removal marker is owned by the event loop: it is authoritative even
+	// if the removal was processed after the worker enqueued its completion.
+	removed := a.copyRemoved
+	var card *detect.Card
+	if sameCard {
+		card = a.currentCard
+	}
+	a.copyID = 0
+	a.copyCancel = nil
+	a.copyRemoved = false
+	a.mu.Unlock()
+
+	a.finishCopyPhase(out.cardPath)
+
+	copied := 0
+	if out.result != nil {
+		copied = out.result.FilesCopied
+	}
+
+	switch {
+	case removed:
+		if errors.Is(out.err, context.Canceled) {
+			a.printMu.Lock()
 			fmt.Printf("\n%s Copy stopped — card removed. %d files copied.\n", term.DimTS(term.Ts()), copied)
-		} else if !shuttingDown {
-			fmt.Printf("\n%s Copy cancelled — %d files copied.\n", term.DimTS(term.Ts()), copied)
-		}
-		a.printMu.Unlock()
-		if removed {
+			a.printMu.Unlock()
 			a.logf("Copy stopped: card removed. %d files copied.", copied)
-		} else if !shuttingDown {
+		} else if out.err != nil {
+			a.logf("Copy failed before card removal: %v", out.err)
+		}
+	case errors.Is(out.err, context.Canceled):
+		if sameCard {
+			a.printMu.Lock()
+			fmt.Printf("\n%s Copy cancelled — %d files copied.\n", term.DimTS(term.Ts()), copied)
+			a.printMu.Unlock()
 			a.logf("Copy cancelled. %d files copied.", copied)
 			a.drainInput()
 			a.printPrompt()
 		}
-		return
-	}
-	if copyErr != nil {
+	case out.err != nil:
 		a.printMu.Lock()
-		fmt.Printf("\n%s Copy failed: %s\n", term.DimTS(term.Ts()), term.FriendlyErr(copyErr))
-		if result != nil && result.FilesCopied > 0 {
-			fmt.Printf("%s %d files copied before failure.\n", term.DimTS(term.Ts()), result.FilesCopied)
+		fmt.Printf("\n%s Copy failed: %s\n", term.DimTS(term.Ts()), term.FriendlyErr(out.err))
+		if out.result != nil && out.result.FilesCopied > 0 {
+			fmt.Printf("%s %d files copied before failure.\n", term.DimTS(term.Ts()), out.result.FilesCopied)
 		}
 		a.printMu.Unlock()
-		a.logf("Copy failed: %v", copyErr)
+		a.logf("Copy failed: %v", out.err)
 		a.drainInput()
 		a.printPrompt()
-		return
+	default:
+		if sameCard {
+			a.handleCopySuccess(card, out.mode, out.destBase, out.result, out.isDryRun, out.previewHidden)
+			fmt.Println()
+			a.drainInput()
+			a.printPrompt()
+		}
 	}
 
-	a.handleCopySuccess(card, mode, destBase, result, isDryRun, previewHidden)
-	fmt.Println()
-	a.drainInput()
-	a.printPrompt()
+	// If the card was removed during the copy, the removal handler deferred the
+	// next-card flow until the worker finished. Advance now that it is done.
+	a.mu.Lock()
+	advance := removed && a.currentCard == nil && a.phase != phaseShuttingDown
+	a.mu.Unlock()
+	if advance {
+		a.finishCard()
+	}
 }
 
 func (a *App) handleCopySuccess(card *detect.Card, mode, destBase string, result *cardcopy.Result, isDryRun bool, previewHidden int) {

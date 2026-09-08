@@ -960,7 +960,7 @@ func TestVerifyBytes_IdenticalFiles(t *testing.T) {
 	}
 
 	buf := make([]byte, 16384)
-	if err := verifyBytes(src, dst, buf); err != nil {
+	if err := verifyTestFiles(src, dst, buf); err != nil {
 		t.Fatalf("verifyBytes returned error for identical files: %v", err)
 	}
 }
@@ -983,7 +983,7 @@ func TestVerifyBytes_ContentMismatch(t *testing.T) {
 	}
 
 	buf := make([]byte, 16384)
-	if err := verifyBytes(src, dst, buf); err == nil {
+	if err := verifyTestFiles(src, dst, buf); err == nil {
 		t.Fatal("verifyBytes should detect tampered content")
 	}
 }
@@ -1001,7 +1001,7 @@ func TestVerifyBytes_SizeMismatch(t *testing.T) {
 	}
 
 	buf := make([]byte, 16384)
-	if err := verifyBytes(src, dst, buf); err == nil {
+	if err := verifyTestFiles(src, dst, buf); err == nil {
 		t.Fatal("verifyBytes should detect size mismatch")
 	}
 }

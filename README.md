@@ -97,7 +97,9 @@ cardbot --setup
 
 See [`TODO.md`](TODO.md) for the current technical backlog and discussion items.
 
-Timestamp naming is deterministic across selective copies of the same card. cardBot refuses to overwrite a non-identical destination if two ingests resolve to the same name.
+Timestamp naming is deterministic across selective copies of the same card. cardBot never replaces an existing destination during ingest. Default `verify_mode=size` skips same-size files without proving content identity; use `advanced.verify_mode=full` for byte-level comparison. Full verification checks the temporary copy before publishing its final filename.
+
+During a copy, cancel with `\` and Enter and wait for completion before ejecting or exiting the card. A pre-existing `.part` file blocks that file's copy rather than being deleted or overwritten automatically.
 
 
 ## Uninstalling

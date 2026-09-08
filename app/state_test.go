@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wdphoto/cardBot/analyze"
 	"github.com/wdphoto/cardBot/cardcopy"
 	"github.com/wdphoto/cardBot/config"
 	"github.com/wdphoto/cardBot/detect"
@@ -230,10 +231,19 @@ func TestCopyFiltered_UsesInjectedCopyRunnerAndRestoresPhase(t *testing.T) {
 	})
 
 	a.detector = fd
-	a.currentCard = &detect.Card{Path: cardPath, Name: "CARD"}
+	card := &detect.Card{Path: cardPath, Name: "CARD"}
+	a.currentCard = card
 	a.phase = phaseReady
+	a.lastResult = &analyze.Result{FileCount: 1}
 
-	a.copyFiltered(a.currentCard, "all")
+	a.handleCopyCmd(card, "all")
+
+	select {
+	case out := <-a.copyDone:
+		a.handleCopyDone(out)
+	case <-time.After(2 * time.Second):
+		t.Fatal("copy worker did not report completion")
+	}
 
 	if called != 1 {
 		t.Fatalf("copy runner called %d times, want 1", called)
@@ -257,11 +267,13 @@ func TestCopyFiltered_BackslashCancels(t *testing.T) {
 	cfg.Destination.Path = t.TempDir()
 	fd := newFakeDetector()
 
+	started := make(chan struct{})
 	a := New(Config{
 		Cfg:         cfg,
 		DryRun:      true,
 		newDetector: func() cardDetector { return fd },
 		runCopy: func(ctx context.Context, _ cardcopy.Options, _ cardcopy.ProgressFunc) (*cardcopy.Result, error) {
+			close(started)
 			<-ctx.Done()
 			return &cardcopy.Result{FilesCopied: 3}, context.Canceled
 		},
@@ -270,31 +282,29 @@ func TestCopyFiltered_BackslashCancels(t *testing.T) {
 	card := &detect.Card{Path: cardPath, Name: "CARD"}
 	a.currentCard = card
 	a.phase = phaseReady
+	a.lastResult = &analyze.Result{FileCount: 1}
 
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		a.copyFiltered(card, "all")
-	}()
+	a.handleCopyCmd(card, "all")
+	<-started
 
-	// Give the copy goroutine time to block on ctx.Done.
-	time.Sleep(50 * time.Millisecond)
 	a.handleInput("\\")
 
 	select {
-	case <-done:
+	case out := <-a.copyDone:
+		a.handleCopyDone(out)
 	case <-time.After(2 * time.Second):
-		t.Fatal("copyFiltered did not return after backslash cancel")
+		t.Fatal("copy worker did not report completion after backslash cancel")
 	}
 
 	if a.copiedModes["all"] {
 		t.Fatal("cancelled copy must not mark mode as completed")
 	}
+	if got := a.currentPhase(); got != phaseReady {
+		t.Fatalf("phase = %v, want %v after cancel", got, phaseReady)
+	}
 }
 
 func TestCopyFiltered_CardRemovedDuringCopy_CancelsAndFinishesCard(t *testing.T) {
-	t.Parallel()
-
 	cardPath := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(cardPath, "DCIM"), 0o755); err != nil {
 		t.Fatal(err)
@@ -303,11 +313,13 @@ func TestCopyFiltered_CardRemovedDuringCopy_CancelsAndFinishesCard(t *testing.T)
 	cfg.Destination.Path = t.TempDir()
 	fd := newFakeDetector()
 
+	started := make(chan struct{})
 	a := New(Config{
 		Cfg:         cfg,
 		DryRun:      true,
 		newDetector: func() cardDetector { return fd },
 		runCopy: func(ctx context.Context, _ cardcopy.Options, _ cardcopy.ProgressFunc) (*cardcopy.Result, error) {
+			close(started)
 			<-ctx.Done()
 			return &cardcopy.Result{FilesCopied: 7}, context.Canceled
 		},
@@ -316,21 +328,19 @@ func TestCopyFiltered_CardRemovedDuringCopy_CancelsAndFinishesCard(t *testing.T)
 	card := &detect.Card{Path: cardPath, Name: "CARD"}
 	a.currentCard = card
 	a.phase = phaseReady
+	a.lastResult = &analyze.Result{FileCount: 1}
 	t.Cleanup(a.stopScanning)
 
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		a.copyFiltered(card, "all")
-	}()
+	a.handleCopyCmd(card, "all")
+	<-started
 
-	time.Sleep(50 * time.Millisecond)
 	a.handleRemoval(cardPath)
 
 	select {
-	case <-done:
+	case out := <-a.copyDone:
+		a.handleCopyDone(out)
 	case <-time.After(2 * time.Second):
-		t.Fatal("copyFiltered did not return after card removal")
+		t.Fatal("copy worker did not report completion after card removal")
 	}
 
 	a.mu.Lock()

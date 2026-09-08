@@ -67,6 +67,7 @@ type Options struct {
 // Plan describes the copy work to be performed after walking the card and
 // resolving destination paths. It is safe to inspect without writing files.
 type Plan struct {
+	destination   destinationLocation
 	Options       Options
 	Files         []PlannedFile
 	TotalBytes    int64
@@ -130,12 +131,25 @@ func PlanCopy(ctx context.Context, opts Options) (*Plan, error) {
 		opts.BufferKB = 256
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	cardPath, destBase, err := normalizeCopyRoots(opts.CardPath, opts.DestBase)
 	if err != nil {
 		return nil, err
 	}
 	opts.CardPath = cardPath
 	opts.DestBase = destBase
+
+	// Planning must not create the destination. When it exists, inspect it
+	// through a directory handle so descendant symlinks cannot escape it.
+	destination, destRoot, err := planDestination(destBase)
+	if err != nil {
+		return nil, err
+	}
+	if destRoot != nil {
+		defer destRoot.Close()
+	}
 
 	dcim := filepath.Join(opts.CardPath, "DCIM")
 	if _, err := os.Stat(dcim); err != nil {
@@ -284,6 +298,7 @@ func PlanCopy(ctx context.Context, opts Options) (*Plan, error) {
 	}
 
 	plan := &Plan{
+		destination:  destination,
 		Options:      opts,
 		Files:        make([]PlannedFile, 0, len(files)),
 		TotalBytes:   totalBytes,
@@ -340,7 +355,7 @@ func PlanCopy(ctx context.Context, opts Options) (*Plan, error) {
 			CaptureTime:   f.captureTime,
 			Action:        ActionCopy,
 		}
-		action, actionErr := classifyDestination(planned, fullVerify, opts.BufferKB)
+		action, actionErr := classifyDestination(ctx, destRoot, planned, fullVerify, opts.BufferKB)
 		if actionErr != nil {
 			return nil, actionErr
 		}
@@ -366,6 +381,9 @@ func Execute(ctx context.Context, plan *Plan, onProgress ProgressFunc) (*Result,
 		return nil, fmt.Errorf("copy plan is required")
 	}
 	opts := plan.Options
+	if err := ctx.Err(); err != nil {
+		return &Result{DestPath: opts.DestBase}, err
+	}
 	if len(plan.Files) == 0 {
 		return &Result{DestPath: opts.DestBase, Warnings: plan.Warnings, VerifyMethod: plan.VerifyMethod}, nil
 	}
@@ -406,20 +424,14 @@ func Execute(ctx context.Context, plan *Plan, onProgress ProgressFunc) (*Result,
 		}, nil
 	}
 
-	// Verify destination is writable.
-	// Skip the probe if the directory already exists (we've written here before).
-	if _, err := os.Stat(opts.DestBase); os.IsNotExist(err) {
-		if err := os.MkdirAll(opts.DestBase, 0755); err != nil {
-			return nil, fmt.Errorf("cannot create destination %s: %w", opts.DestBase, err)
-		}
-		probe := filepath.Join(opts.DestBase, ".cardbot_probe")
-		if f, err := os.Create(probe); err != nil {
-			return nil, fmt.Errorf("destination %s is not writable: %w", opts.DestBase, err)
-		} else {
-			f.Close()
-			os.Remove(probe)
-		}
+	if opts.DestBase != plan.destination.basePath {
+		return nil, fmt.Errorf("destination path changed after planning")
 	}
+	destRoot, err := plan.destination.open()
+	if err != nil {
+		return nil, err
+	}
+	defer destRoot.Close()
 
 	// --- Disk space check ---
 	// If we can query free space and it's clearly insufficient, fail fast.
@@ -442,7 +454,6 @@ func Execute(ctx context.Context, plan *Plan, onProgress ProgressFunc) (*Result,
 	var filesSkipped int
 	var bytesSkipped int64
 	start := time.Now()
-	madeDir := make(map[string]bool, 32)
 
 	// Intra-file byte counter for live progress on large files.
 	var fileByteCounter atomic.Int64
@@ -461,6 +472,15 @@ func Execute(ctx context.Context, plan *Plan, onProgress ProgressFunc) (*Result,
 
 		f := &plan.Files[i]
 		if f.Action != ActionCopy {
+			// A plan is a snapshot, not proof that the destination is still
+			// present, contained, or identical when execution reaches it.
+			action, err := classifyDestination(ctx, destRoot, *f, fullVerify, opts.BufferKB)
+			if err == nil && action != f.Action {
+				err = fmt.Errorf("%w: %s changed after planning", ErrDestinationConflict, f.DestPath)
+			}
+			if err != nil {
+				return partialResult(filesDone, filesSkipped, bytesDone, bytesSkipped, start, opts.DestBase, verifyMethod), err
+			}
 			filesSkipped++
 			bytesSkipped += f.Size
 			bytesDone += f.Size
@@ -486,17 +506,9 @@ func Execute(ctx context.Context, plan *Plan, onProgress ProgressFunc) (*Result,
 			})
 		}
 
-		if err := copyFileCtx(ctx, f.DestPath, f.SourcePath, f.Size, buf, madeDir, &fileByteCounter); err != nil {
+		if err := copyFileCtx(ctx, destRoot, *f, buf, &fileByteCounter, fullVerify); err != nil {
 			return partialResult(filesDone, filesSkipped, bytesDone, bytesSkipped, start, opts.DestBase, verifyMethod),
 				fmt.Errorf("copying %s: %w", f.SourceRelPath, err)
-		}
-
-		// Full verification: read back and compare bytes against source.
-		if fullVerify {
-			if err := verifyBytes(f.SourcePath, f.DestPath, buf); err != nil {
-				return partialResult(filesDone, filesSkipped, bytesDone, bytesSkipped, start, opts.DestBase, verifyMethod),
-					fmt.Errorf("verification failed for %s: %w", f.SourceRelPath, err)
-			}
 		}
 
 		bytesDone += f.Size
@@ -611,8 +623,28 @@ func partialResult(files, skipped int, bytes, bytesSkipped int64, start time.Tim
 	}
 }
 
-func classifyDestination(f PlannedFile, fullVerify bool, bufferKB int) (PlannedAction, error) {
-	info, err := os.Lstat(f.DestPath)
+// destinationRelative rejects paths outside the configured root even if a caller
+// supplies or modifies a Plan directly. os.Root enforces filesystem containment.
+func destinationRelative(root *os.Root, path string) (string, error) {
+	rel, err := filepath.Rel(root.Name(), path)
+	if err != nil || !filepath.IsLocal(rel) {
+		return "", fmt.Errorf("refusing to access outside destination: %s", path)
+	}
+	return rel, nil
+}
+
+func classifyDestination(ctx context.Context, root *os.Root, f PlannedFile, fullVerify bool, bufferKB int) (PlannedAction, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if root == nil {
+		return ActionCopy, nil // destination does not exist yet
+	}
+	rel, err := destinationRelative(root, f.DestPath)
+	if err != nil {
+		return "", err
+	}
+	info, err := root.Lstat(rel)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return ActionCopy, nil
@@ -628,53 +660,74 @@ func classifyDestination(f PlannedFile, fullVerify bool, bufferKB int) (PlannedA
 	if !fullVerify {
 		return ActionSkipSizeMatch, nil
 	}
+	src, err := os.Open(f.SourcePath)
+	if err != nil {
+		return "", fmt.Errorf("opening source: %w", err)
+	}
+	defer src.Close()
+	dst, err := root.Open(rel)
+	if err != nil {
+		return "", fmt.Errorf("opening destination: %w", err)
+	}
+	defer dst.Close()
 	buf := make([]byte, bufferKB*1024)
-	if err := verifyBytes(f.SourcePath, f.DestPath, buf); err != nil {
+	if err := verifyBytes(ctx, src, dst, buf); err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
 		return "", fmt.Errorf("%w: %s differs from source: %v", ErrDestinationConflict, f.DestPath, err)
 	}
 	return ActionSkipIdentical, nil
 }
 
-// copyFileCtx copies a single file with size verification, atomic rename,
-// and mid-file cancellation support.
-//
-// Writes to a temporary .part file, syncs, then renames to the final path.
-// The trackingReader wraps the source to update fileBytes atomically during
-// the copy (for intra-file progress) and to check ctx for cancellation every
-// 4 MB (so large video files can be cancelled promptly).
-//
-// madeDir caches directories already created to avoid redundant MkdirAll syscalls.
-func copyFileCtx(ctx context.Context, dst, src string, srcSize int64, buf []byte, madeDir map[string]bool, fileBytes *atomic.Int64) (err error) {
-	dir := filepath.Dir(dst)
-	if !madeDir[dir] {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return err
-		}
-		madeDir[dir] = true
+// copyFileCtx pins a contained parent directory for every operation on the
+// partial/final file, including verification, cleanup, and no-replace commit.
+func copyFileCtx(ctx context.Context, root *os.Root, f PlannedFile, buf []byte, fileBytes *atomic.Int64, fullVerify bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-
-	sf, err := os.Open(src)
+	rel, err := destinationRelative(root, f.DestPath)
 	if err != nil {
 		return err
 	}
-	defer sf.Close()
+	if err := root.MkdirAll(filepath.Dir(rel), 0755); err != nil {
+		return err
+	}
+	dir, err := root.OpenRoot(filepath.Dir(rel))
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	src, err := os.Open(f.SourcePath)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	return copyToDir(ctx, dir, filepath.Base(rel), src, f.Size, buf, fileBytes, fullVerify)
+}
 
-	// Write to a temporary .part file to avoid exposing half-written files.
+// copyToDir publishes only a complete, synced, and (in full mode) verified file.
+// src is seekable so verification rereads the same open source after copying.
+func copyToDir(ctx context.Context, dir *os.Root, dst string, src io.ReadSeeker, srcSize int64, buf []byte, fileBytes *atomic.Int64, fullVerify bool) (err error) {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// Never truncate or remove a pre-existing partial: another copy may own it.
 	partPath := dst + ".part"
-	df, err := os.OpenFile(partPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	df, err := dir.OpenFile(partPath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		if err != nil {
 			df.Close()
-			os.Remove(partPath)
+			dir.Remove(partPath)
 		}
 	}()
 
 	// Wrap the source in a tracking reader for byte counting + cancellation.
 	tr := &trackingReader{
-		r:          sf,
+		r:          src,
 		ctx:        ctx,
 		counter:    fileBytes,
 		checkEvery: defaultCheckEvery,
@@ -693,12 +746,25 @@ func copyFileCtx(ctx context.Context, dst, src string, srcSize int64, buf []byte
 		return fmt.Errorf("sync: %w", err)
 	}
 
+	if fullVerify {
+		if _, err := src.Seek(0, io.SeekStart); err != nil {
+			return fmt.Errorf("rewinding source: %w", err)
+		}
+		if _, err := df.Seek(0, io.SeekStart); err != nil {
+			return fmt.Errorf("rewinding partial file: %w", err)
+		}
+		if err := verifyBytes(ctx, src, df, buf); err != nil {
+			return fmt.Errorf("verification failed: %w", err)
+		}
+	}
 	if err := df.Close(); err != nil {
 		return fmt.Errorf("close: %w", err)
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
-	if err := commitNoReplace(partPath, dst); err != nil {
-		os.Remove(partPath)
+	if err := commitNoReplace(dir, partPath, dst); err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return fmt.Errorf("%w: %s was created after planning", ErrDestinationConflict, dst)
 		}
@@ -724,19 +790,9 @@ func sortFilesByCaptureTime(files []fileEntry) {
 // Uses the provided buffer (split in half) to avoid extra allocations.
 // This is faster than hashing for large media files: same I/O cost, zero
 // hash overhead, and can short-circuit on first mismatch.
-func verifyBytes(src, dst string, buf []byte) error {
-	sf, err := os.Open(src)
-	if err != nil {
-		return fmt.Errorf("opening source: %w", err)
-	}
-	defer sf.Close()
-
-	df, err := os.Open(dst)
-	if err != nil {
-		return fmt.Errorf("opening destination: %w", err)
-	}
-	defer df.Close()
-
+// Cancellation is checked between reads; it cannot interrupt a kernel read
+// already blocked on a device or network filesystem.
+func verifyBytes(ctx context.Context, src, dst io.Reader, buf []byte) error {
 	// Split the buffer for simultaneous reads.
 	half := len(buf) / 2
 	if half < 4096 {
@@ -747,8 +803,17 @@ func verifyBytes(src, dst string, buf []byte) error {
 	dstBuf := buf[half : half*2]
 
 	for {
-		sn, sErr := io.ReadFull(sf, srcBuf)
-		dn, dErr := io.ReadFull(df, dstBuf)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		sn, sErr := io.ReadFull(src, srcBuf)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		dn, dErr := io.ReadFull(dst, dstBuf)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 
 		if sn != dn {
 			return fmt.Errorf("byte count mismatch at offset: source read %d, destination read %d", sn, dn)

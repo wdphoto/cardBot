@@ -1,6 +1,7 @@
 package app
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -24,6 +25,25 @@ func TestCardIsReadOnly(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing")
 	if !cardIsReadOnly(missing) {
 		t.Fatal("expected missing dir to be treated as read-only")
+	}
+}
+
+func TestCardIsReadOnly_PreservesExistingProbe(t *testing.T) {
+	card := t.TempDir()
+	probe := filepath.Join(card, ".cardbot_rw")
+	if err := os.WriteFile(probe, []byte("existing file"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if cardIsReadOnly(card) {
+		t.Fatal("expected writable card")
+	}
+	got, err := os.ReadFile(probe)
+	if err != nil || string(got) != "existing file" {
+		t.Fatalf("probe changed existing file: data=%q err=%v", got, err)
+	}
+	entries, err := os.ReadDir(card)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("probe left temporary files: entries=%v err=%v", entries, err)
 	}
 }
 

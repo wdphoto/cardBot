@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Bind copy completion to its session, queue insertions while cancellation finishes, and require cancellation before exit/eject during copy.
+- Contain destination access with rooted directory handles and reject destination-base replacements between planning and execution.
+- Cancel full verification between reads, verify partial files before publication, and recheck planned skips before reporting completion.
 - Refuse non-identical destination conflicts and use no-replace final commits.
 - Keep timestamp names stable across selective modes and ingest sidecars with their primary media.
 - Preserve malformed/future configuration files and save valid configuration atomically.

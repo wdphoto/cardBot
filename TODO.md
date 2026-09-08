@@ -30,6 +30,15 @@ This is the concise project backlog. Rationale, evidence, and acceptance guidanc
 - [x] Add representative analysis, planning, and full-verification benchmarks. Cancellation remains covered by deterministic tests; hardware profiling is a release QA activity.
 - [x] Keep line-based input. Raw single-key mode would add terminal-state and accessibility risk without improving ingest safety.
 
+## Resumed safety pass
+
+- [x] Make the event loop own copy completion, register cancellation before worker launch, block exit/eject while copying, and isolate completion from replacement cards with per-copy identity.
+- [x] Enforce destination containment with rooted operations, a verified destination-base identity, and directory-relative no-replace commits. Revalidate planned skips before reporting success.
+- [x] Observe cancellation between full-verification reads and verify temporary copies before publishing final filenames. In-flight kernel reads can still block on device/network I/O.
+- [x] Make the card write-access probe use an exclusive temporary file rather than truncating a fixed name.
+- [ ] Decide a safe, explicit recovery workflow for pre-existing `.part` files. Preserve them for now: age or size alone cannot establish that another ingest no longer owns them.
+- [ ] Resolve the version-number rollback (`v0.9.0` predates `v0.0.10`) before publishing another release; older installations' SemVer comparisons can otherwise suppress updates.
+
 ## Manual release QA
 
 - [ ] On each supported macOS release line, exercise real card insert/removal, eject, sleep/wake, permission denial, and cancellation with the polling backend.
@@ -39,7 +48,7 @@ This is the concise project backlog. Rationale, evidence, and acceptance guidanc
 
 - [x] Plan copy operations before execution and reject duplicate destinations within one plan.
 - [x] Reject destination traversal and destinations located on the source card.
-- [x] Use temporary partial files, sync them, and clean them on copy failure/cancellation.
+- [x] Use exclusive temporary partial files, sync them, and clean up only the current copy's partial on failure/cancellation; never remove a pre-existing partial.
 - [x] Reject timestamp sequence overflow instead of silently wrapping after `9999`.
 - [x] Implement byte-level `verify_mode=full` for copied and existing files.
 - [x] Skip source symlinks and exercise the core copy path under the race detector.

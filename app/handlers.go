@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/wdphoto/cardBot/analyze"
+	"github.com/wdphoto/cardBot/config"
 	"github.com/wdphoto/cardBot/detect"
 	"github.com/wdphoto/cardBot/term"
 )
@@ -42,7 +43,10 @@ func (a *App) handleCardEvent(card *detect.Card) {
 
 	a.stopScanningLocked()
 
-	if a.currentCard == nil {
+	// While a copy worker is active (including the wind-down after a removal),
+	// new cards are queued; the event loop advances to them once the worker's
+	// outcome has been processed. This gate is independent of the phase value.
+	if a.currentCard == nil && a.copyID == 0 {
 		a.currentCard = card
 		a.setPhaseLocked(phaseAnalyzing)
 		fmt.Printf("%s Scanning ✓\n", a.TsPrefix())
@@ -246,15 +250,15 @@ func (a *App) finishCard() {
 }
 
 // resumeScanningIfIdle starts the scanning spinner only if
-// no current card is active and no queued cards are waiting.
+// no current card is active, no queued cards are waiting, no copy worker is
+// active, and the app is not shutting down.
 func (a *App) resumeScanningIfIdle() {
 	a.mu.Lock()
-	shouldStart := shouldResumeScanning(a.currentCard == nil, len(a.cardQueue))
-	a.mu.Unlock()
-	if !shouldStart {
-		return
+	defer a.mu.Unlock()
+	if shouldResumeScanning(a.currentCard == nil, len(a.cardQueue)) &&
+		a.copyID == 0 && a.phase != phaseShuttingDown {
+		a.startScanningLocked()
 	}
-	a.StartScanning()
 }
 
 func (a *App) handleRemoval(path string) {
@@ -267,7 +271,8 @@ func (a *App) handleRemoval(path string) {
 	wasCurrent := a.currentCard != nil && sameCardPath(a.currentCard.Path, path)
 
 	if wasCurrent {
-		if a.phase == phaseCopying && a.copyCancel != nil {
+		copyInProgress := a.copyID != 0
+		if copyInProgress && a.copyCancel != nil {
 			a.copyRemoved = true
 			a.copyCancel()
 		}
@@ -279,6 +284,17 @@ func (a *App) handleRemoval(path string) {
 		a.lastResult = nil
 		a.copiedModes = make(map[string]bool)
 		a.cardInvalid = false
+
+		if copyInProgress {
+			// The copy worker is still winding down. Keep the phase at
+			// phaseCopying so no new card or copy can start; the copy outcome
+			// handler advances to the next card once the worker is done.
+			a.mu.Unlock()
+			fmt.Printf("\n%s Card removed: %s\n", a.TsPrefix(), path)
+			a.logf("Card removed: %s", path)
+			return
+		}
+
 		hasQueue := len(a.cardQueue) > 0
 		a.setPhaseLocked(phaseAfterFinish(len(a.cardQueue)))
 		var nextCard *detect.Card
@@ -363,8 +379,18 @@ func (a *App) handleInput(input string) {
 	case actionCopyYesterday:
 		a.handleCopyCmd(card, "yesterday")
 	case actionEject:
+		if a.copyInProgress() {
+			fmt.Printf("\n%s Copy in progress — press [\\] to cancel first.\n", a.TsPrefix())
+			a.printPrompt()
+			return
+		}
 		a.ejectCard(card)
 	case actionExitCard:
+		if a.copyInProgress() {
+			fmt.Printf("\n%s Copy in progress — press [\\] to cancel first.\n", a.TsPrefix())
+			a.printPrompt()
+			return
+		}
 		a.cancelCard()
 	case actionHardwareInfo:
 		a.showHardwareInfo(card)
@@ -420,18 +446,50 @@ func (a *App) handleCopyCmd(card *detect.Card, mode string) {
 		return
 	}
 
-	a.mu.Lock()
-	if a.currentCard == nil || !sameCardPath(a.currentCard.Path, card.Path) || a.phase != phaseReady {
-		a.mu.Unlock()
+	destBase, err := config.ExpandPath(a.cfg.Destination.Path)
+	if err != nil {
+		fmt.Printf("\n%s Error: %s\n", a.TsPrefix(), term.FriendlyErr(err))
+		a.printPrompt()
 		return
 	}
+	if destBase == "" {
+		fmt.Printf("\n%s Error: no destination configured — run cardbot --setup\n", a.TsPrefix())
+		a.printPrompt()
+		return
+	}
+
+	// Snapshot the session before the worker starts: derive a copy context and
+	// register it synchronously so removal/eject/shutdown can always cancel an
+	// active copy, and pin the analysis result so a later scan cannot change
+	// what this worker copies. The explicit worker gate (copyID) refuses new
+	// copies while any worker is active, independent of the phase value.
+	ctx, cancel := context.WithCancel(a.ctx)
+	a.mu.Lock()
+	if a.copyID != 0 || a.currentCard == nil || !sameCardPath(a.currentCard.Path, card.Path) || a.phase != phaseReady {
+		a.mu.Unlock()
+		cancel()
+		return
+	}
+	a.copySeq++
+	copyID := a.copySeq
+	a.copyID = copyID
+	a.copyCancel = cancel
+	a.copyRemoved = false
 	a.setPhaseLocked(phaseCopying)
 	a.mu.Unlock()
+
 	a.copyWG.Add(1)
 	go func() {
 		defer a.copyWG.Done()
-		a.copyFiltered(card, mode)
+		a.copyFiltered(ctx, cancel, card, mode, destBase, analyzeResult, copyID)
 	}()
+}
+
+// copyInProgress reports whether a copy worker is currently active.
+func (a *App) copyInProgress() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.copyID != 0
 }
 
 func formatElapsed(d time.Duration) string {
