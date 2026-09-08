@@ -7,15 +7,12 @@ import (
 	"time"
 )
 
-// SequenceDigits is the fixed sequence padding width.
-// 4 digits (0001–9999) prevents rollover on heavy shoot days (1000+ shots).
+// SequenceDigits is the minimum sequence padding width. Larger sequences grow
+// naturally (9999, 10000, ...); existing four-digit names never change width.
 const SequenceDigits = 4
 
-// sequenceMax is the maximum sequence number for SequenceDigits width.
-const sequenceMax = 9999
-
 func formatSequence(n, digits int) string {
-	// Sequence is 1-based: 0001-9999, loop back to 0001
+	// Sequence is 1-based. Padding is a minimum, never a limit or rollover.
 	if n < 1 {
 		n = 1
 	}

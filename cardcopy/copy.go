@@ -312,17 +312,11 @@ func PlanCopy(ctx context.Context, opts Options) (*Plan, error) {
 	// Compute rename mappings for progress reporting and dry-run preview.
 	namingMode := isTimestampMode(opts.NamingMode)
 	assetSequence := make(map[string]int, len(files))
-	nextSequence := 1
 	for i := range files {
 		key := files[i].assetKey
 		if _, ok := assetSequence[key]; !ok {
-			assetSequence[key] = nextSequence
-			nextSequence++
+			assetSequence[key] = len(assetSequence) + 1
 		}
-	}
-	assetCount := nextSequence - 1
-	if namingMode && assetCount > sequenceMax {
-		return nil, fmt.Errorf("timestamp naming supports at most %d assets per copy; got %d", sequenceMax, assetCount)
 	}
 	// Pre-compute all destination paths for dry-run and progress reporting.
 	seenDest := make(map[string]string, len(files))

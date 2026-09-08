@@ -105,7 +105,7 @@ cardbot --setup
 
 See [`TODO.md`](TODO.md) for the current technical backlog and discussion items.
 
-Timestamp naming is deterministic across selective copies of the same card. It currently refuses cards with more than 9,999 ingest assets, even for selective copies, to prevent sequence rollover; lifting that limit safely is tracked in `TODO.md`. cardBot never replaces an existing destination during ingest. Default `verify_mode=size` skips same-size files without proving content identity; use `advanced.verify_mode=full` for byte-level comparison. Full verification checks the temporary copy before publishing its final filename.
+Timestamp naming is deterministic across selective copies of the same card. The sequence suffix uses a minimum of four digits (`0001` … `9999`, `10000` …) and grows without rollover, so cards with 10,000+ assets work in all and selective modes. Existing four-digit mappings are preserved; padding does not change based on the card's total file count. cardBot never replaces an existing destination during ingest. Default `verify_mode=size` skips same-size files without proving content identity; use `advanced.verify_mode=full` for byte-level comparison. Full verification checks the temporary copy before publishing its final filename.
 
 During a copy, cancel with `\` and Enter and wait for completion before ejecting or exiting the card. A pre-existing `.part` file blocks that file's copy rather than being deleted or overwritten automatically.
 

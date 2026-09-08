@@ -46,7 +46,8 @@ This is the concise project backlog. Rationale, evidence, and acceptance guidanc
 - [x] Remove mutable global hardware-lookup test hooks; a connected card exposed a race with background detector enrichment during the full test run.
 - [x] Exercise read-only scan and dry-run selections on the connected Nikon card (11,653 photos). Original-name previews passed: all 11,660 files, photos 11,654 including companions, selects 1, yesterday 301; videos/today correctly reported no matches. Card inventory/sizes/mtimes, `.cardbot` bytes, and destination-root metadata were unchanged; no media was copied or card ejected. Temporary naming override was not saved.
 - [x] Preserve significant whitespace in copy roots. The Nikon mount's trailing spaces exposed a planner bug that could select a different, trimmed path; cover both dry-run and tiny synthetic copies with regression tests.
-- [ ] Lift the 9,999-asset timestamp naming limit without sequence rollover or changing existing mappings; retain the guard until the naming policy and compatibility tests are updated. Real-card timestamp dry runs currently fail closed at 11,659 assets, including selective modes.
+- [x] Lift the 9,999-asset timestamp naming limit: four digits are a minimum width, not a cap. Preserve existing mappings, grow suffixes without rollover, and test all/selective planning, sidecars, and tiny verified/repeated copies across the 10,000 boundary.
+- [x] Repeat real-card timestamp dry runs after lifting the limit: all 11,660 files, photos 11,654, selects 1, yesterday 301; videos/today correctly reported no matches. Card inventory/sizes/mtimes, `.cardbot` bytes, and destination-root metadata were unchanged; no media copies or eject operations.
 
 ## Manual release QA
 
@@ -58,6 +59,6 @@ This is the concise project backlog. Rationale, evidence, and acceptance guidanc
 - [x] Plan copy operations before execution and reject duplicate destinations within one plan.
 - [x] Reject destination traversal and destinations located on the source card.
 - [x] Use exclusive temporary partial files, sync them, and clean up only the current copy's partial on failure/cancellation; never remove a pre-existing partial.
-- [x] Reject timestamp sequence overflow instead of silently wrapping after `9999`.
+- [x] Preserve timestamp sequence values beyond `9999` without rollover or re-padding existing names.
 - [x] Implement byte-level `verify_mode=full` for copied and existing files.
 - [x] Skip source symlinks and exercise the core copy path under the race detector.
