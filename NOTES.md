@@ -92,7 +92,7 @@ Use one of: `darwin-arm64`, `darwin-amd64`, `linux-amd64`, `linux-arm64`.
 ## Build from source
 
 Requirements:
-- Go 1.26.5+ (the project toolchain directive pins this security-patched release)
+- Go 1.26.8+ (the minimum in `go.mod`; CI and release builds pin this patched toolchain)
 - Git
 
 ```bash

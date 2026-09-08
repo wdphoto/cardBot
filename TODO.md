@@ -49,6 +49,11 @@ This is the concise project backlog. Rationale, evidence, and acceptance guidanc
 - [x] Lift the 9,999-asset timestamp naming limit: four digits are a minimum width, not a cap. Preserve existing mappings, grow suffixes without rollover, and test all/selective planning, sidecars, and tiny verified/repeated copies across the 10,000 boundary.
 - [x] Repeat real-card timestamp dry runs after lifting the limit: all 11,660 files, photos 11,654, selects 1, yesterday 301; videos/today correctly reported no matches. Card inventory/sizes/mtimes, `.cardbot` bytes, and destination-root metadata were unchanged; no media copies or eject operations.
 
+## Checkpoint CI follow-up
+
+- [x] Raise the minimum Go version and CI/release pins to 1.26.8, the current supported 1.26 patch release. Checkpoint CI on 1.26.5 found reachable standard-library vulnerabilities GO-2026-6218, GO-2026-6090, GO-2026-5972, and GO-2026-5026 (fixed in 1.26.6); keep vulnerability scanning enabled.
+- [ ] Refresh pinned GitHub Actions for native Node.js 24 compatibility. Checkpoint CI warns that current pins are being forced from Node.js 20 to 24; verify upstream action metadata before changing pins.
+
 ## Manual release QA
 
 - [ ] On each supported macOS release line, exercise real card insert/removal, eject, sleep/wake, permission denial, and cancellation with the polling backend.
