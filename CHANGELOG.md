@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Spring-cleaning cleanup: preserve significant whitespace in manual setup destinations and daemon/launcher working directories; stop rejecting bare-relative edge-space targets; remove the dead daemon-status flag parser; drop unused viper flag bindings; fix Linux volume-UUID basename matching and `/proc/mounts` octal-escape decoding; fsync the updater temp before rename; document safe uninstall via the script.
 - Prevent `.cardbot` history writes from following or truncating pre-existing temporary-file symlinks; use exclusive, synced temporary files before publication.
 - Isolate tests from live mounts, daemon status, and stdin; add bounded fuzzing and copy/updater fault regressions, and reject empty checksum filenames.
 - Refresh SHA-pinned CI/release actions for native Node.js 24 without broadening workflow permissions.

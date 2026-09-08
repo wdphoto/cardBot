@@ -46,8 +46,7 @@ func daemonTerminalAppLabel(name string) string {
 }
 
 func resolveDaemonWorkingDirectory(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
+	if strings.TrimSpace(raw) == "" {
 		raw = "~"
 	}
 	expanded, err := config.ExpandPath(raw)

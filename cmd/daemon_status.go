@@ -3,7 +3,6 @@ package cmd
 import (
 	"bufio"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -85,23 +84,6 @@ func runDaemonStatus(opts daemonStatusOptions, version string) int {
 
 	fprintDaemonStatusReport(os.Stdout, report)
 	return 0
-}
-
-func parseDaemonStatusOptions(args []string) (daemonStatusOptions, error) {
-	fs := flag.NewFlagSet("daemon-status", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	jsonOut := fs.Bool("json", false, "output daemon status as JSON")
-	recentLaunches := fs.Int("recent-launches", 0, "include last N launcher exec log lines")
-	if err := fs.Parse(args); err != nil {
-		return daemonStatusOptions{}, err
-	}
-	if fs.NArg() > 0 {
-		return daemonStatusOptions{}, fmt.Errorf("unexpected arguments: %s", strings.Join(fs.Args(), " "))
-	}
-	if *recentLaunches < 0 {
-		return daemonStatusOptions{}, fmt.Errorf("--recent-launches must be >= 0")
-	}
-	return daemonStatusOptions{JSON: *jsonOut, RecentLaunches: *recentLaunches}, nil
 }
 
 func collectDaemonStatusReport(opts daemonStatusOptions, version string) daemonStatusReport {

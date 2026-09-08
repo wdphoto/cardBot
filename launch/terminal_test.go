@@ -154,6 +154,85 @@ func TestOpenWith_GhosttyDefault_UsesConfiguredWorkingDirectory(t *testing.T) {
 	}
 }
 
+func TestOpenWith_GenericApp_PreservesBinaryEdgeSpace(t *testing.T) {
+	var got recordedCommand
+	run := func(name string, args ...string) error {
+		got = recordedCommand{name: name, args: append([]string{}, args...)}
+		return nil
+	}
+
+	err := openWith(Options{
+		TerminalApp:   "MyCustomTerm.app",
+		CardBotBinary: "/pfx/cardbot ",
+		MountPath:     "/Volumes/NIKON",
+	}, run)
+	if err != nil {
+		t.Fatalf("openWith error: %v", err)
+	}
+	// generic branch: run("open", "-a", app, "--args", binary, mountPath);
+	// recordedCommand.args excludes the command name, so binary is at index 3.
+	if got.args[3] != "/pfx/cardbot " {
+		t.Fatalf("binary arg = %q, want preserved %q", got.args[3], "/pfx/cardbot ")
+	}
+	if got.args[4] != "/Volumes/NIKON" {
+		t.Fatalf("mount arg = %q, want %q", got.args[4], "/Volumes/NIKON")
+	}
+}
+
+func TestOpenWith_GenericApp_PreservesQuotedBinaryInsideEdgeSpace(t *testing.T) {
+	var got recordedCommand
+	run := func(name string, args ...string) error {
+		got = recordedCommand{name: name, args: append([]string{}, args...)}
+		return nil
+	}
+
+	// Fully quoted binary with a significant inside trailing space.
+	err := openWith(Options{
+		TerminalApp:   "MyCustomTerm.app",
+		CardBotBinary: `"/pfx/cardbot "`,
+		MountPath:     "/Volumes/NIKON",
+	}, run)
+	if err != nil {
+		t.Fatalf("openWith error: %v", err)
+	}
+	if got.args[3] != "/pfx/cardbot " {
+		t.Fatalf("binary arg = %q, want preserved %q", got.args[3], "/pfx/cardbot ")
+	}
+}
+
+func TestOpenWith_WhitespaceOnlyBinaryRejected(t *testing.T) {
+	run := func(name string, args ...string) error { return nil }
+	err := openWith(Options{
+		TerminalApp:   "Ghostty",
+		CardBotBinary: "   ",
+		MountPath:     "/Volumes/NIKON",
+	}, run)
+	if err == nil {
+		t.Fatal("expected error for whitespace-only binary")
+	}
+}
+
+func TestOpenWith_Ghostty_PreservesWorkingDirEdgeSpace(t *testing.T) {
+	var got recordedCommand
+	run := func(name string, args ...string) error {
+		got = recordedCommand{name: name, args: append([]string{}, args...)}
+		return nil
+	}
+
+	err := openWith(Options{
+		TerminalApp:      "Ghostty",
+		WorkingDirectory: "/dest/Client ",
+		CardBotBinary:    "/usr/local/bin/cardbot",
+		MountPath:        "/Volumes/CARD",
+	}, run)
+	if err != nil {
+		t.Fatalf("openWith error: %v", err)
+	}
+	if got.args[3] != "--working-directory=/dest/Client " {
+		t.Fatalf("args = %v, want preserved working-directory arg", got.args)
+	}
+}
+
 func TestOpenWith_CustomLaunchArgs_TemplatesResolved(t *testing.T) {
 	var got recordedCommand
 	run := func(name string, args ...string) error {

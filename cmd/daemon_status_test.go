@@ -4,68 +4,93 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/wdphoto/cardBot/launch"
 )
 
-func TestParseDaemonStatusOptions_Default(t *testing.T) {
+func daemonStatusCommand(t *testing.T) *cobra.Command {
+	t.Helper()
+	root := NewRootCommand(BuildInfo{Version: "test"})
+	for _, c := range root.Commands() {
+		if c.Use == "daemon-status" {
+			return c
+		}
+	}
+	t.Fatal("daemon-status subcommand not found")
+	return nil
+}
+
+func TestDaemonStatusCommand_Default(t *testing.T) {
 	t.Parallel()
 
-	opts, err := parseDaemonStatusOptions(nil)
-	if err != nil {
-		t.Fatalf("parseDaemonStatusOptions error: %v", err)
+	c := daemonStatusCommand(t)
+	if err := c.ParseFlags(nil); err != nil {
+		t.Fatalf("ParseFlags error: %v", err)
 	}
-	if opts.JSON {
-		t.Fatal("opts.JSON = true, want false")
+	if v, _ := c.Flags().GetBool("json"); v {
+		t.Fatal("json = true, want false")
 	}
-	if opts.RecentLaunches != 0 {
-		t.Fatalf("opts.RecentLaunches = %d, want 0", opts.RecentLaunches)
+	if v, _ := c.Flags().GetInt("recent-launches"); v != 0 {
+		t.Fatalf("recent-launches = %d, want 0", v)
 	}
 }
 
-func TestParseDaemonStatusOptions_JSON(t *testing.T) {
+func TestDaemonStatusCommand_JSON(t *testing.T) {
 	t.Parallel()
 
-	opts, err := parseDaemonStatusOptions([]string{"--json"})
-	if err != nil {
-		t.Fatalf("parseDaemonStatusOptions error: %v", err)
+	c := daemonStatusCommand(t)
+	if err := c.ParseFlags([]string{"--json"}); err != nil {
+		t.Fatalf("ParseFlags error: %v", err)
 	}
-	if !opts.JSON {
-		t.Fatal("opts.JSON = false, want true")
-	}
-	if opts.RecentLaunches != 0 {
-		t.Fatalf("opts.RecentLaunches = %d, want 0", opts.RecentLaunches)
+	if v, _ := c.Flags().GetBool("json"); !v {
+		t.Fatal("json = false, want true")
 	}
 }
 
-func TestParseDaemonStatusOptions_RecentLaunches(t *testing.T) {
+func TestDaemonStatusCommand_RecentLaunches(t *testing.T) {
 	t.Parallel()
 
-	opts, err := parseDaemonStatusOptions([]string{"--recent-launches", "7"})
-	if err != nil {
-		t.Fatalf("parseDaemonStatusOptions error: %v", err)
+	c := daemonStatusCommand(t)
+	if err := c.ParseFlags([]string{"--recent-launches", "7"}); err != nil {
+		t.Fatalf("ParseFlags error: %v", err)
 	}
-	if opts.RecentLaunches != 7 {
-		t.Fatalf("opts.RecentLaunches = %d, want 7", opts.RecentLaunches)
-	}
-}
-
-func TestParseDaemonStatusOptions_RecentLaunchesNegative(t *testing.T) {
-	t.Parallel()
-
-	_, err := parseDaemonStatusOptions([]string{"--recent-launches", "-1"})
-	if err == nil {
-		t.Fatal("expected error")
+	if v, _ := c.Flags().GetInt("recent-launches"); v != 7 {
+		t.Fatalf("recent-launches = %d, want 7", v)
 	}
 }
 
-func TestParseDaemonStatusOptions_UnexpectedArg(t *testing.T) {
+func TestDaemonStatusCommand_NegativeRecentLaunches(t *testing.T) {
 	t.Parallel()
 
-	_, err := parseDaemonStatusOptions([]string{"wat"})
-	if err == nil {
-		t.Fatal("expected error")
+	c := daemonStatusCommand(t)
+	if err := c.ParseFlags([]string{"--recent-launches", "-1"}); err != nil {
+		t.Fatalf("ParseFlags error: %v", err)
+	}
+	// RunE returns the early negative error before runDaemonStatus (no live host).
+	err := c.RunE(c, nil)
+	if err == nil || !strings.Contains(err.Error(), "--recent-launches must be >= 0") {
+		t.Fatalf("RunE error = %v, want early negative usage error", err)
+	}
+}
+
+func TestDaemonStatusCommand_UnexpectedArg(t *testing.T) {
+	t.Parallel()
+
+	c := daemonStatusCommand(t)
+	if err := c.Args(c, []string{"wat"}); err == nil {
+		t.Fatal("expected error for unexpected argument")
+	}
+}
+
+func TestDaemonStatusCommand_UnknownOption(t *testing.T) {
+	t.Parallel()
+
+	c := daemonStatusCommand(t)
+	if err := c.ParseFlags([]string{"--bogus"}); err == nil {
+		t.Fatal("expected error for unknown option")
 	}
 }
 
@@ -177,5 +202,19 @@ func TestCollectDaemonStatusReport_AppliesEnvOverrides(t *testing.T) {
 	)
 	if report.Daemon.WorkingDirectory != "/tmp/cardbot-env" {
 		t.Fatalf("WorkingDirectory = %q, want %q", report.Daemon.WorkingDirectory, "/tmp/cardbot-env")
+	}
+}
+
+func TestCollectDaemonStatusReport_PreservesTrailingSpaceWorkingDir(t *testing.T) {
+	isolatedDaemonConfigPath(t)
+	t.Setenv("CARDBOT_DESTINATION", "/tmp/cardbot-env  ")
+
+	report := collectDaemonStatusReportWith(daemonStatusOptions{}, "dev",
+		func(string, int) (bool, error) { return false, nil },
+		func() daemonStatusDIReport { return daemonStatusDIReport{} },
+		func() (launch.Status, error) { return launch.Status{}, nil },
+	)
+	if report.Daemon.WorkingDirectory != "/tmp/cardbot-env  " {
+		t.Fatalf("WorkingDirectory = %q, want preserved %q", report.Daemon.WorkingDirectory, "/tmp/cardbot-env  ")
 	}
 }
