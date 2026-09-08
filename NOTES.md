@@ -102,6 +102,17 @@ go build -o cardbot .
 ./cardbot --version
 ```
 
+Source builds use the development version in `VERSION` (`0.10.0-dev`), not the nearest historical tag. Use `make build` to include commit/dirty-state and date metadata. Published release binaries instead receive their stable version through linker flags in the release workflow.
+
+Before a future release, validate the proposed tag without creating it:
+
+```bash
+git tag --list | bash scripts/check-release-version.sh v0.10.0 "$(< VERSION)"
+bash scripts/qa_release_version.sh
+```
+
+`v0.10.0` is the next planned release, not a currently available download. Keep historical `v0.9.0` and `v0.0.10` tags/releases intact; do not reuse the lower `0.0.x` line. Full-transfer hardware QA and explicit approval are still required before publishing.
+
 ### macOS with Xcode CLI tools
 
 ```bash

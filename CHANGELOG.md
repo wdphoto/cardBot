@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Standardize development builds on `0.10.0-dev` in `VERSION`, with `v0.10.0` reserved for the next release; prevent future release-version rollbacks without rewriting historical tags.
 - Support timestamp naming beyond 9,999 assets, including selective copies: sequence suffixes grow past four digits without rollover or changing existing mappings.
 - Remove speculative card write-access probes; warn only if saving `.cardbot` after an ingest actually fails.
 - Describe status as the latest recorded ingest, with historical selection labels rather than implying current backup coverage.

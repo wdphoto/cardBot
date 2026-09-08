@@ -19,6 +19,9 @@ jobs:
         run: |
           git fetch origin main
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - name: Validate stable release version
+        run: |
+          git tag --list | bash scripts/check-release-version.sh "$GITHUB_REF_NAME" "$(< VERSION)"
 
   build:
     needs: validate-tag

@@ -40,6 +40,14 @@ The easy install:
 curl -fsSL https://raw.githubusercontent.com/wdphoto/cardBot/main/scripts/install.sh | sh
 ```
 
+## Development versions
+
+`VERSION` is the source of truth for development builds, currently **`0.10.0-dev`**. Both `go build` and `make build` use it; `make build` also records the commit, dirty-tree state, and build date separately. Local builds no longer derive their version from the nearest Git tag.
+
+The next planned release is **`v0.10.0`**, not yet published. It sorts above both historical lines: `v0.9.0` and the later, lower-numbered `v0.0.10`. Existing tags/releases remain unchanged; the updater continues using normal SemVer comparisons. Older installations will recognize the new release once it is published.
+
+Release tags must be stable `vMAJOR.MINOR.PATCH`, match `VERSION` without `-dev`, point to a commit on `main`, and not fall below any existing stable tag. Published binaries take their version from that validated tag; ordinary source builds remain development builds. After a release, advance `VERSION` to the next intended version with `-dev`.
+
 ## Usage
 
 Start cardBot:
@@ -100,8 +108,8 @@ cardbot --setup
 | **0.0.7** | Code Refactor | Complete |
 | **0.0.8** | Card copy operations | Complete |
 | **0.0.10** | Release/copy correctness pass | Complete |
-| **0.0.11** | Docs, release workflow, and performance profiling | Planned |
-| **0.0.12** | Copyright check and injection | Planned |
+| **0.10.0** | Safety hardening, release workflow, and performance QA | Unreleased |
+| **Later** | Copyright check and injection | Planned |
 
 See [`TODO.md`](TODO.md) for the current technical backlog and discussion items.
 

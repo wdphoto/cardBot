@@ -1,7 +1,7 @@
 .PHONY: build test cover clean qa-050 qa-051-sleepwake qa-051-permissions qa-052-installer
 
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
+VERSION ?= $(shell tr -d '\r\n' < VERSION)
+COMMIT  ?= $(shell git describe --always --dirty --exclude='*' 2>/dev/null || echo none)
 DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
 build:

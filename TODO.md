@@ -37,7 +37,7 @@ This is the concise project backlog. Rationale, evidence, and acceptance guidanc
 - [x] Observe cancellation between full-verification reads and verify temporary copies before publishing final filenames. In-flight kernel reads can still block on device/network I/O.
 - [x] Remove card write-access probes entirely; report actual `.cardbot` write failures after completed ingests without treating the media copy as failed.
 - [ ] Decide a safe, explicit recovery workflow for pre-existing `.part` files. Preserve them for now: age or size alone cannot establish that another ingest no longer owns them.
-- [ ] Resolve the version-number rollback (`v0.9.0` predates `v0.0.10`) before publishing another release; older installations' SemVer comparisons can otherwise suppress updates.
+- [x] Resolve the version-number rollback: use `VERSION` = `0.10.0-dev` for source builds and reserve `v0.10.0` for the next release. Preserve historical tags/releases, test upgrade paths from both old lines, and validate release tags against the source version and highest existing stable tag. No release has been published.
 
 ## Read-only usability pass
 
