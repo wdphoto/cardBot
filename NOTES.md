@@ -222,34 +222,28 @@ When `daemon.debug` is `true`:
 
 # Uninstalling cardBot
 
-## Quick Teardown (instant)
+## Recommended: uninstall script
+
+Use the project uninstaller rather than manual `pkill`/`rm`:
 
 ```bash
-# Kill background daemon
-pkill -f "cardbot --daemon"
+# Default: remove the recorded installation plus known candidate-validated cleanup (daemon + binary)
+sh scripts/uninstall.sh
 
-# Remove LaunchAgent
-launchctl bootout gui/$(id -u)/com.illwill.cardbot
-rm -f ~/Library/LaunchAgents/com.illwill.cardbot.plist
+# Preview what would be removed without deleting anything
+sh scripts/uninstall.sh --dry-run
 
-# Remove binary
-rm ~/bin/cardbot
-
-# Optional: purge config + logs
-rm -rf ~/Library/Application\ Support/cardbot ~/.cardbot
+# Also remove config and log files (known default filenames only)
+sh scripts/uninstall.sh --purge
 ```
+
+- `--dry-run` prevents deletion but still executes candidate `--version` checks, so do not use it on untrusted candidate paths.
+- `--install-dir <path>` is an **explicit, authoritative** deletion of `<path>/cardbot`; only use it when you know that path is the intended installation.
+- `--purge` removes only the known default config/log filenames, not an arbitrary `Advanced.LogFile`/XDG path.
+- The daemon-stop guard is **basename/PID-only** (`ps -o comm=`), not a full daemon-role/instance identity check; under a rare stale-PID/PID-reuse condition it could signal an unrelated foreground `cardbot`. Prefer stopping the daemon through the script.
+- Do not use `pkill -f "cardbot --daemon"` or direct `launchctl bootout`/`rm`; they bypass the script's recorded/candidate-validated removal and can affect unrelated processes.
 
 ---
-
-## With Uninstall Script
-
-```bash
-# Full uninstall (daemon + binary)
-sh scripts/uninstall.sh --install-dir ~/bin
-
-# Full uninstall + purge config + logs
-sh scripts/uninstall.sh --install-dir ~/bin --purge
-```
 
 ### Uninstall Script Options
 

@@ -1,6 +1,6 @@
 # cardBot TODO
 
-This is the concise project backlog. Rationale, evidence, and acceptance guidance from the latest audit live in [`CODE_REVIEW_2026-07-09.md`](CODE_REVIEW_2026-07-09.md).
+This is the concise project backlog. Rationale, evidence, and acceptance guidance from the latest audit live in [`CODE_REVIEW_2026-09-08.md`](CODE_REVIEW_2026-09-08.md). The earlier [`CODE_REVIEW_2026-07-09.md`](CODE_REVIEW_2026-07-09.md) remains the audit trail for decisions that have already landed.
 
 ## P1 — before the next serious release
 
@@ -18,7 +18,7 @@ This is the concise project backlog. Rationale, evidence, and acceptance guidanc
 - [x] Add reproducible CI checks for `staticcheck`, `govulncheck`, formatting, shell lint, race tests, and release build targets.
 - [x] Add restart/concurrent-lifecycle detector tests and compile/test both release polling and opt-in native macOS backends.
 - [x] Harden updater SemVer/checksum parsing, response limits, release provenance, and supported-platform replacement behavior.
-- [x] Make uninstall target only recorded or identity-verified installations by default, with temporary-home script QA.
+- [x] Use candidate version checks for default binary removal and a recorded-PID/name check for process stopping, with temporary-home script QA.
 
 ## P3 — maintainability and decisions
 
@@ -69,6 +69,19 @@ This is the concise project backlog. Rationale, evidence, and acceptance guidanc
 - [x] Reproduce and fix fixed-name `.cardbot.tmp` symlink truncation using synthetic media. Publish history from an exclusive unique temporary, synced/closed before rename, preserving pre-existing temporaries.
 - [x] Add missing short-write/disk-full stream tests, transactional read/rewind/size/cancellation/late-conflict regressions, verification read failures, and failed updater preservation/cleanup tests. All fixtures are private and tiny.
 - Reproduce and review scope/limitations in [`TESTING.md`](TESTING.md); run `bash scripts/qa_fuzz.sh`. Real device sync/close faults and hardware behavior remain manual QA, not inferred from synthetic tests.
+
+## Spring-cleaning review — 2026-09-08
+
+Implemented in the 2026-09-08 cleanup pass (findings #1–#6, #8, #9). Deferred: #7 stdin joinability, daemon PID role identity, `.part` recovery, hardware QA. Full evidence in [`CODE_REVIEW_2026-09-08.md`](CODE_REVIEW_2026-09-08.md). Suggested (not implemented) items are labelled as such.
+
+- [x] Preserve significant whitespace for manually entered setup destinations: strip only the line terminator instead of all whitespace (readline fallback in `cmd/setup.go:40`). This is the sole trim of the **stored interactive destination**; other path-trim surfaces are finding #9. [`CODE_REVIEW_2026-09-08.md` #1](CODE_REVIEW_2026-09-08.md). The native folder-picker trim is NOT proven reachable.
+- [x] Remove the dead, test-only flag parser `parseDaemonStatusOptions` (`cmd/daemon_status.go`) and migrate its meaningful cases to the real cobra command (`cmd/root.go:209-227`), testing `ParseFlags`/`Flags` getters/`Args` and the **existing early negative `RunE`** (no new validator). [#2](CODE_REVIEW_2026-09-08.md).
+- [x] Fix Linux volume-UUID substring match (Linux **hardware-metadata display**): compare `filepath.Base(target) == device` in `detect/hardware_linux.go`. [#3](CODE_REVIEW_2026-09-08.md).
+- [x] Decode `/proc/mounts` octal escapes (`\040` space, `\011` tab, `\012` newline, `\134` backslash) in one pass so spaced mount paths resolve for **hardware-metadata** lookup in `findBlockDevice`; factor a pure mount-line parser to test. [#4](CODE_REVIEW_2026-09-08.md).
+- [x] Replace the `NOTES.md` Quick Teardown block (`pkill -f "cardbot --daemon"`, direct plist/binary `rm`) with the uninstaller path (`sh scripts/uninstall.sh`); the guard is basename/PID-only (not full identity verification), so reserve `--install-dir` as explicit authoritative deletion and describe `--purge` narrowly. [#5](CODE_REVIEW_2026-09-08.md).
+- [x] `fsync` the updater temp before rename (`update/update.go`) as incremental durability hardening (not a power-loss guarantee). [Suggested] [#6](CODE_REVIEW_2026-09-08.md).
+- [x] Drop the unused viper flag bindings for `--dry-run`/`--setup`/`--daemon` (`cmd/root.go`); retain the `destination` binding. Do not remove `opts.Dest` (pflag backing storage). [Suggested] [#8](CODE_REVIEW_2026-09-08.md).
+- [x] Path-boundary whitespace (finding #9): 9A root `looksLikeCommandToken` rejects a bare-relative edge-space target (stat the raw arg); 9B launcher trims a legal edge-space `CardBotBinary`; 9C daemon/Ghostty trims the destination-derived working directory. Preserve edge spaces; fake-runner/overlay tests only. [#9](CODE_REVIEW_2026-09-08.md).
 
 ## Manual release QA
 

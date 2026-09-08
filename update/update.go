@@ -141,6 +141,9 @@ func SelfUpdateForPlatform(ctx context.Context, client *http.Client, apiBase, re
 	if err := tmp.Chmod(mode); err != nil {
 		return "", fmt.Errorf("setting executable mode: %w", err)
 	}
+	if err := tmp.Sync(); err != nil {
+		return "", fmt.Errorf("syncing temp file: %w", err)
+	}
 	if err := tmp.Close(); err != nil {
 		return "", fmt.Errorf("closing temp file: %w", err)
 	}

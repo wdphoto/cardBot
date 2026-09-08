@@ -47,6 +47,8 @@ func TestResolveDaemonWorkingDirectory(t *testing.T) {
 		{"whitespace defaults to home", "   ", home},
 		{"tilde expands to home", "~", home},
 		{"absolute path passes through", "/tmp/test", "/tmp/test"},
+		{"trailing-space absolute preserved", "/tmp/Client ", "/tmp/Client "},
+		{"trailing-space tilde preserved", "~/Client ", home + "/Client "},
 	}
 
 	for _, tt := range tests {

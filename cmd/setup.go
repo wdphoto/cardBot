@@ -50,8 +50,15 @@ func promptDestinationReadlineIO(defaultPath string, in *bufio.Reader, out io.Wr
 
 	fmt.Fprintf(out, "Destination [%s]: ", defaultPath)
 	line, _ := in.ReadString('\n')
-	line = strings.TrimSpace(line)
-	if line == "" {
+	// Strip only the line terminator so significant leading/trailing spaces in
+	// a manually entered path are preserved; blank/whitespace-only still defaults.
+	// A CR is removed only when it immediately precedes a stripped LF (CRLF), so
+	// a path ending in a literal CR at EOF is preserved.
+	if strings.HasSuffix(line, "\n") {
+		line = strings.TrimSuffix(line, "\n")
+		line = strings.TrimSuffix(line, "\r")
+	}
+	if strings.TrimSpace(line) == "" {
 		return defaultPath
 	}
 	return line

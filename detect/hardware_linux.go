@@ -123,9 +123,11 @@ func findBlockDevice(mountPath string) (string, error) {
 
 	lines := strings.Split(string(data), "\n")
 	for _, line := range lines {
-		fields := strings.Fields(line)
-		if len(fields) >= 2 && fields[1] == mountPath {
-			device := fields[0]
+		device, path, ok := parseMountLine(line)
+		if !ok {
+			continue
+		}
+		if path == mountPath {
 			// Convert /dev/mmcblk0p1 to mmcblk0p1 format
 			if strings.HasPrefix(device, "/dev/") {
 				return device[5:], nil
@@ -174,19 +176,24 @@ func getDeviceSize(device string) int64 {
 }
 
 func getVolumeUUID(device string) string {
-	// Try /dev/disk/by-uuid
-	entries, err := os.ReadDir("/dev/disk/by-uuid")
+	return getVolumeUUIDFromDir(device, "/dev/disk/by-uuid")
+}
+
+// getVolumeUUIDFromDir is a directory-parameter seam so the lookup can be
+// tested with temporary symlinks on Linux without touching /dev/disk/by-uuid.
+func getVolumeUUIDFromDir(device, dir string) string {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return ""
 	}
 
 	for _, entry := range entries {
-		target, err := os.Readlink(filepath.Join("/dev/disk/by-uuid", entry.Name()))
+		target, err := os.Readlink(filepath.Join(dir, entry.Name()))
 		if err != nil {
 			continue
 		}
 		// target looks like "../../mmcblk0p1"
-		if strings.Contains(target, device) {
+		if volumeUUIDMatches(target, device) {
 			return entry.Name()
 		}
 	}

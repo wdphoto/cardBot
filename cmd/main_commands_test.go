@@ -68,6 +68,35 @@ func TestLooksLikeCommandToken_ExistingRelativePath(t *testing.T) {
 	}
 }
 
+func TestLooksLikeCommandToken_ExistingEdgeSpaceRelativePath(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	temp := t.TempDir()
+	if err := os.Chdir(temp); err != nil {
+		t.Fatalf("Chdir temp: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(wd)
+	})
+
+	// A real directory whose name has a trailing space, with no trimmed sibling.
+	name := "Client "
+	if err := os.Mkdir(filepath.Join(temp, name), 0o755); err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
+
+	// The raw arg is the consumed target; a significant-whitespace relative
+	// path must not be rejected as an unknown command.
+	if got := looksLikeCommandToken(name); got {
+		t.Fatalf("looksLikeCommandToken(%q) = true, want false for existing edge-space path", name)
+	}
+	if got := looksLikeCommandToken("./" + name); got {
+		t.Fatalf("looksLikeCommandToken(%q) = true, want false (path-like bypass)", "./"+name)
+	}
+}
+
 func TestRootCommand_UnknownCommand(t *testing.T) {
 	t.Parallel()
 

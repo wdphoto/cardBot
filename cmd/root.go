@@ -156,10 +156,10 @@ func newCommandViper() *viper.Viper {
 }
 
 func bindRootFlags(v *viper.Viper, flags *pflag.FlagSet) {
+	// Of root flags, only --dest participates in applyConfigOverrides;
+	// dry-run/setup/daemon are consumed via opts.*. Keep their Viper keys unread
+	// so AutomaticEnv cannot activate behavior through this function.
 	_ = v.BindPFlag("destination", flags.Lookup("dest"))
-	_ = v.BindPFlag("dry-run", flags.Lookup("dry-run"))
-	_ = v.BindPFlag("setup", flags.Lookup("setup"))
-	_ = v.BindPFlag("daemon", flags.Lookup("daemon"))
 }
 
 func newSelfUpdateCommand(info BuildInfo) *cobra.Command {
@@ -545,10 +545,12 @@ func runReset() int {
 }
 
 func looksLikeCommandToken(arg string) bool {
-	arg = strings.TrimSpace(arg)
-	if arg == "" || strings.HasPrefix(arg, "-") {
+	trimmed := strings.TrimSpace(arg)
+	if trimmed == "" || strings.HasPrefix(trimmed, "-") {
 		return false
 	}
+	// Classify against the raw arg (the consumed target is opts.Args[0]) so
+	// significant edge whitespace cannot change the result.
 	if isPathLikeArg(arg) {
 		return false
 	}

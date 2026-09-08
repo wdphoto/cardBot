@@ -26,9 +26,9 @@ func Open(opts Options) error {
 }
 
 func openWith(opts Options, run commandRunner) error {
-	binary := stripMatchingQuotes(strings.TrimSpace(opts.CardBotBinary))
+	binary := stripMatchingQuotes(opts.CardBotBinary)
 	mountPath := stripMatchingQuotes(opts.MountPath)
-	if binary == "" {
+	if strings.TrimSpace(binary) == "" {
 		return fmt.Errorf("cardbot binary path is required")
 	}
 	if strings.TrimSpace(mountPath) == "" {
@@ -285,8 +285,7 @@ func isGhosttyApp(app string) bool {
 }
 
 func ghosttyWorkingDirectory(configured string) string {
-	configured = strings.TrimSpace(configured)
-	if configured != "" {
+	if strings.TrimSpace(configured) != "" {
 		return configured
 	}
 	home, err := os.UserHomeDir()
