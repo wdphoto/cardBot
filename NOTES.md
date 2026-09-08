@@ -141,7 +141,10 @@ Release artifacts are currently built with `CGO_ENABLED=0`, so macOS releases us
 ```bash
 go test ./... -count=1
 make test
+bash scripts/qa_fuzz.sh
 ```
+
+See [automated safety QA](TESTING.md) for test isolation, bounded fuzzing, and the explicit native-detector hardware-test boundary.
 
 ## Self-update
 

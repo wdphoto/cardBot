@@ -107,4 +107,6 @@ jobs:
         with:
           go-version: '1.26.8'
       - name: Build and test opt-in native detector
-        run: go test -tags cardbot_native ./detect
+        env:
+          CARDBOT_TEST_LIVE_DETECTOR: '1' # Hosted runner only, not local attached cards.
+        run: go test -race -tags cardbot_native ./detect

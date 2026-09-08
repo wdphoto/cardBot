@@ -21,6 +21,7 @@ type Detector struct {
 	started  bool
 	stopChan chan struct{}
 	wg       sync.WaitGroup
+	scan     func() // Optional per-instance scan injection; set before Start.
 }
 
 // NewDetector creates a new card detector.
@@ -97,8 +98,12 @@ func (d *Detector) Remove(path string) {
 func (d *Detector) pollLoop() {
 	defer d.wg.Done()
 
+	scan := d.scan
+	if scan == nil {
+		scan = d.scanVolumes
+	}
 	// Initial scan
-	d.scanVolumes()
+	scan()
 
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
@@ -108,7 +113,7 @@ func (d *Detector) pollLoop() {
 		case <-d.stopChan:
 			return
 		case <-ticker.C:
-			d.scanVolumes()
+			scan()
 		}
 	}
 }

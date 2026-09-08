@@ -62,6 +62,11 @@ func Read(cardPath string) Status {
 		return Status{}
 	}
 
+	return parseStatus(data)
+}
+
+// parseStatus migrates history in memory only; parsing never writes to the card.
+func parseStatus(data []byte) Status {
 	// Try reading schema type first
 	var probe struct {
 		Schema string `json:"$schema"`
@@ -202,13 +207,37 @@ func Write(opts WriteOptions) error {
 	}
 	data = append(data, '\n')
 
-	tmp := target + ".tmp"
-
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
+	// An exclusive, unique temporary must never follow or truncate an existing
+	// .cardbot.tmp file/symlink. Clean up only the file created by this call.
+	tmp, err := os.CreateTemp(opts.CardPath, ".cardbot-*.tmp")
+	if err != nil {
 		return err
 	}
-
-	return os.Rename(tmp, target)
+	tmpPath := tmp.Name()
+	committed := false
+	defer func() {
+		_ = tmp.Close()
+		if !committed {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := tmp.Chmod(0644); err != nil {
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, target); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 // FormatStatus describes the most recent valid ingest record, not whether the

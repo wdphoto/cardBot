@@ -62,6 +62,14 @@ This is the concise project backlog. Rationale, evidence, and acceptance guidanc
 - [x] Exercise login plist install/status/uninstall and launch failures with temporary homes and fake launchctl commands. XML-escape executable paths without losing significant whitespace.
 - Validation command: `go test -race ./daemon ./launch ./instance ./cmd -count=1`. No live LaunchAgent installation, terminal launch, card writes, or ejects are part of this QA; real login/launchd behavior remains hardware/manual QA.
 
+## Bounded automated safety pass
+
+- [x] Audit test side effects; isolate polling scans, daemon status host checks, and app stdin. Keep native DiskArbitration restart explicitly opt-in locally and active on hosted CI.
+- [x] Add bounded fuzz targets for destination/naming invariants, fragmented byte verification, ingest history, SemVer, and checksum parsing. Run five 20-second/two-worker sessions (3,468,989 executions); reject the empty checksum filename exposed by a seed case.
+- [x] Reproduce and fix fixed-name `.cardbot.tmp` symlink truncation using synthetic media. Publish history from an exclusive unique temporary, synced/closed before rename, preserving pre-existing temporaries.
+- [x] Add missing short-write/disk-full stream tests, transactional read/rewind/size/cancellation/late-conflict regressions, verification read failures, and failed updater preservation/cleanup tests. All fixtures are private and tiny.
+- Reproduce and review scope/limitations in [`TESTING.md`](TESTING.md); run `bash scripts/qa_fuzz.sh`. Real device sync/close faults and hardware behavior remain manual QA, not inferred from synthetic tests.
+
 ## Manual release QA
 
 - [ ] On each supported macOS release line, exercise real card insert/removal, eject, sleep/wake, permission denial, and cancellation with the polling backend.

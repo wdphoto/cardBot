@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/wdphoto/cardBot/launch"
 )
 
 func TestParseDaemonStatusOptions_Default(t *testing.T) {
@@ -165,9 +167,14 @@ func TestReadRecentLauncherExecLines_FallsBackToOldLog(t *testing.T) {
 }
 
 func TestCollectDaemonStatusReport_AppliesEnvOverrides(t *testing.T) {
+	isolatedDaemonConfigPath(t)
 	t.Setenv("CARDBOT_DESTINATION", "/tmp/cardbot-env")
 
-	report := collectDaemonStatusReport(daemonStatusOptions{}, "0.0.10")
+	report := collectDaemonStatusReportWith(daemonStatusOptions{}, "dev",
+		func(string, int) (bool, error) { return false, nil },
+		func() daemonStatusDIReport { return daemonStatusDIReport{} },
+		func() (launch.Status, error) { return launch.Status{}, nil },
+	)
 	if report.Daemon.WorkingDirectory != "/tmp/cardbot-env" {
 		t.Fatalf("WorkingDirectory = %q, want %q", report.Daemon.WorkingDirectory, "/tmp/cardbot-env")
 	}

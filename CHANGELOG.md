@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Prevent `.cardbot` history writes from following or truncating pre-existing temporary-file symlinks; use exclusive, synced temporary files before publication.
+- Isolate tests from live mounts, daemon status, and stdin; add bounded fuzzing and copy/updater fault regressions, and reject empty checksum filenames.
 - Refresh SHA-pinned CI/release actions for native Node.js 24 without broadening workflow permissions.
 - Harden headless daemon startup, preserve unreadable daemon configuration, and correctly encode executable paths in login plists; add isolated daemon/login lifecycle QA.
 - Require Go 1.26.8+ and update CI/release toolchain pins to address standard-library vulnerabilities reported by checkpoint CI.

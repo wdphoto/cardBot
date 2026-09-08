@@ -718,15 +718,7 @@ func copyToDir(ctx context.Context, dir *os.Root, dst string, src io.ReadSeeker,
 		}
 	}()
 
-	// Wrap the source in a tracking reader for byte counting + cancellation.
-	tr := &trackingReader{
-		r:          src,
-		ctx:        ctx,
-		counter:    fileBytes,
-		checkEvery: defaultCheckEvery,
-	}
-
-	n, err := io.CopyBuffer(df, tr, buf)
+	n, err := copyStream(ctx, df, src, buf, fileBytes)
 	if err != nil {
 		return err
 	}

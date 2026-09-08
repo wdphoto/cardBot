@@ -265,6 +265,9 @@ func parseChecksums(data []byte) (map[string]string, error) {
 			return nil, fmt.Errorf("invalid SHA256 checksum %q", parts[0])
 		}
 		name := strings.TrimPrefix(parts[len(parts)-1], "*")
+		if name == "" {
+			return nil, fmt.Errorf("checksum filename is empty")
+		}
 		if existing, ok := out[name]; ok && existing != hash {
 			return nil, fmt.Errorf("conflicting checksums for %s", name)
 		}

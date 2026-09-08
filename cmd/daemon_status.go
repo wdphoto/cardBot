@@ -105,6 +105,15 @@ func parseDaemonStatusOptions(args []string) (daemonStatusOptions, error) {
 }
 
 func collectDaemonStatusReport(opts daemonStatusOptions, version string) daemonStatusReport {
+	return collectDaemonStatusReportWith(opts, version, instance.HasOtherProcess, collectDaemonInstanceStatus, launch.CurrentStatus)
+}
+
+// Inject host checks so report tests never inspect live processes or launchd.
+func collectDaemonStatusReportWith(opts daemonStatusOptions, version string,
+	checkProcess func(string, int) (bool, error),
+	checkDaemon func() daemonStatusDIReport,
+	checkLaunchAgent func() (launch.Status, error),
+) daemonStatusReport {
 	processName := "cardbot"
 	if exe, err := os.Executable(); err == nil {
 		processName = filepath.Base(exe)
@@ -113,7 +122,7 @@ func collectDaemonStatusReport(opts daemonStatusOptions, version string) daemonS
 	report := daemonStatusReport{
 		Version:             version,
 		PID:                 pid,
-		SingleInstanceGuard: collectSingleInstanceGuardStatus(processName, pid, instance.HasOtherProcess),
+		SingleInstanceGuard: collectSingleInstanceGuardStatus(processName, pid, checkProcess),
 		LaunchAgent:         daemonStatusLAReport{Supported: runtime.GOOS == "darwin"},
 	}
 
@@ -150,7 +159,7 @@ func collectDaemonStatusReport(opts daemonStatusOptions, version string) daemonS
 	}
 
 	// Check if a daemon is currently running via PID file.
-	report.DaemonInstance = collectDaemonInstanceStatus()
+	report.DaemonInstance = checkDaemon()
 
 	if opts.RecentLaunches > 0 {
 		report.RecentLauncherExecRequested = opts.RecentLaunches
@@ -171,7 +180,7 @@ func collectDaemonStatusReport(opts daemonStatusOptions, version string) daemonS
 		return report
 	}
 
-	st, err := launch.CurrentStatus()
+	st, err := checkLaunchAgent()
 	if err != nil {
 		report.LaunchAgent.Error = err.Error()
 		return report

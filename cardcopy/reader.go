@@ -12,6 +12,13 @@ import (
 //   - At 10 MB/s  → cancel detected within ~400ms
 const defaultCheckEvery = 4 * 1024 * 1024
 
+// copyStream keeps byte tracking/cancellation on the reader while propagating
+// short writes and device errors from the destination. It does not publish files.
+func copyStream(ctx context.Context, dst io.Writer, src io.Reader, buf []byte, counter *atomic.Int64) (int64, error) {
+	tr := &trackingReader{r: src, ctx: ctx, counter: counter, checkEvery: defaultCheckEvery}
+	return io.CopyBuffer(dst, tr, buf)
+}
+
 // trackingReader wraps an io.Reader to provide:
 //  1. Live byte counting via an atomic counter (for intra-file progress)
 //  2. Periodic context cancellation checks (for mid-file abort)
