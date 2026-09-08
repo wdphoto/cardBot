@@ -35,14 +35,23 @@ This is the concise project backlog. Rationale, evidence, and acceptance guidanc
 - [x] Make the event loop own copy completion, register cancellation before worker launch, block exit/eject while copying, and isolate completion from replacement cards with per-copy identity.
 - [x] Enforce destination containment with rooted operations, a verified destination-base identity, and directory-relative no-replace commits. Revalidate planned skips before reporting success.
 - [x] Observe cancellation between full-verification reads and verify temporary copies before publishing final filenames. In-flight kernel reads can still block on device/network I/O.
-- [x] Make the card write-access probe use an exclusive temporary file rather than truncating a fixed name.
+- [x] Remove card write-access probes entirely; report actual `.cardbot` write failures after completed ingests without treating the media copy as failed.
 - [ ] Decide a safe, explicit recovery workflow for pre-existing `.part` files. Preserve them for now: age or size alone cannot establish that another ingest no longer owns them.
 - [ ] Resolve the version-number rollback (`v0.9.0` predates `v0.0.10`) before publishing another release; older installations' SemVer comparisons can otherwise suppress updates.
+
+## Read-only usability pass
+
+- [x] Display the latest valid ingest record without combining older modes under a newer timestamp; clarify historical today/yesterday selections and missing history.
+- [x] Group displayed file counts, use completed-scan wording, and avoid a duplicate `v` prefix in startup versions.
+- [x] Remove mutable global hardware-lookup test hooks; a connected card exposed a race with background detector enrichment during the full test run.
+- [x] Exercise read-only scan and dry-run selections on the connected Nikon card (11,653 photos). Original-name previews passed: all 11,660 files, photos 11,654 including companions, selects 1, yesterday 301; videos/today correctly reported no matches. Card inventory/sizes/mtimes, `.cardbot` bytes, and destination-root metadata were unchanged; no media was copied or card ejected. Temporary naming override was not saved.
+- [x] Preserve significant whitespace in copy roots. The Nikon mount's trailing spaces exposed a planner bug that could select a different, trimmed path; cover both dry-run and tiny synthetic copies with regression tests.
+- [ ] Lift the 9,999-asset timestamp naming limit without sequence rollover or changing existing mappings; retain the guard until the naming policy and compatibility tests are updated. Real-card timestamp dry runs currently fail closed at 11,659 assets, including selective modes.
 
 ## Manual release QA
 
 - [ ] On each supported macOS release line, exercise real card insert/removal, eject, sleep/wake, permission denial, and cancellation with the polling backend.
-- [ ] Run the benchmark suite on representative RAW/video cards and local, external, and network destinations before changing worker or buffer defaults.
+- [ ] Run the benchmark suite on representative RAW/video cards and local, external, and network destinations before changing worker or buffer defaults. Full-transfer hardware QA is deferred until sufficient destination space and suitable source protection are available.
 
 ## Completed safeguards to preserve
 

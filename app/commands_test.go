@@ -1,10 +1,13 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -98,6 +101,43 @@ func TestHandleCopySuccess_UsesInjectedDotfileWriter(t *testing.T) {
 	}
 	if got.Destination != "/dest/path" {
 		t.Fatalf("destination = %q, want %q", got.Destination, "/dest/path")
+	}
+}
+
+func TestCopyFiltered_ReportsActualStatusWriteFailureWithoutProbe(t *testing.T) {
+	for _, writeErr := range []error{os.ErrPermission, syscall.EROFS, errors.New("metadata write failed")} {
+		t.Run(writeErr.Error(), func(t *testing.T) {
+			a, _, card := newLifecycleApp(t, func(context.Context, cardcopy.Options, cardcopy.ProgressFunc) (*cardcopy.Result, error) {
+				return &cardcopy.Result{FilesCopied: 11653}, nil
+			})
+			a.dryRun = false
+			// The injected runner does not need a real source. A speculative
+			// permission probe here would produce a false read-only warning.
+			card.Path = filepath.Join(t.TempDir(), "unprobed-card")
+			writes := 0
+			a.writeDotfile = func(dotfile.WriteOptions) error {
+				writes++
+				return writeErr
+			}
+			out := captureStdout(t, func() {
+				a.handleCopyCmd(card, "all")
+				outcome := waitOutcome(t, a)
+				a.copyWG.Wait()
+				a.handleCopyDone(outcome)
+			})
+			if strings.Contains(out, "appears to be write-protected") {
+				t.Fatalf("unexpected speculative permission warning:\n%s", out)
+			}
+			if !strings.Contains(out, "ingest completed, but could not save .cardbot on card: "+writeErr.Error()) {
+				t.Fatalf("missing actual status-write failure:\n%s", out)
+			}
+			if writes != 1 || !a.copiedModes["all"] {
+				t.Fatalf("metadata failure lost completed copy: writes=%d modes=%v", writes, a.copiedModes)
+			}
+			if !strings.Contains(out, "11,653 files") {
+				t.Fatalf("missing grouped copy count:\n%s", out)
+			}
+		})
 	}
 }
 

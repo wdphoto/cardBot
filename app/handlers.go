@@ -18,7 +18,6 @@ import (
 
 const (
 	minScanVisualDuration = 350 * time.Millisecond
-	scanLinePaceDelay     = 120 * time.Millisecond
 
 	targetNoDCIMRetryDelay       = 350 * time.Millisecond
 	targetNoDCIMRetryMaxAttempts = 8
@@ -121,7 +120,7 @@ func (a *App) analyzeCard(ctx context.Context, path, scanTS string) (*analyze.Re
 		analyzer.SetWorkers(a.cfg.Advanced.ExifWorkers)
 		analyzer.OnProgress(func(count int) {
 			if count%100 == 0 {
-				fmt.Printf("\r%s Scanning %d files", scanTS, count)
+				fmt.Printf("\r%s Scanning %s files", scanTS, term.FormatCount(count))
 			}
 		})
 
@@ -203,10 +202,8 @@ func (a *App) displayCard(ctx context.Context, path, scanTS string) {
 	if result != nil {
 		total = result.FileCount
 	}
-	fmt.Printf("\r%s Scanning %d files ✓\n", a.TsPrefix(), total)
-	time.Sleep(scanLinePaceDelay)
 	durStr := formatElapsed(elapsed)
-	fmt.Printf("%s Scan completed in %s\n", a.TsPrefix(), durStr)
+	fmt.Printf("\r%s Scanned %s files in %s ✓\n", a.TsPrefix(), term.FormatCount(total), durStr)
 	a.logf("Scan completed: %s — %d files in %s", path, total, durStr)
 	fmt.Println()
 

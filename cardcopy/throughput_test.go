@@ -212,7 +212,7 @@ func TestFormatProgressLine(t *testing.T) {
 				ETASeconds:  252,
 				SmoothedBPS: 182 * 1024 * 1024,
 			},
-			want: "Copying  1247/3051  44.9 GB/89.8 GB  182 MB/s  ETA 4m12s",
+			want: "Copying  1,247/3,051  44.9 GB/89.8 GB  182 MB/s  ETA 4m12s",
 		},
 		{
 			name: "early no eta",
@@ -224,7 +224,7 @@ func TestFormatProgressLine(t *testing.T) {
 				ETASeconds:  -1,
 				SmoothedBPS: 50 * 1024 * 1024,
 			},
-			want: "Copying  3/3051  143.1 MB/89.8 GB  50 MB/s",
+			want: "Copying  3/3,051  143.1 MB/89.8 GB  50 MB/s",
 		},
 		{
 			name: "complete",

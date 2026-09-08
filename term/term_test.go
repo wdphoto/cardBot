@@ -5,6 +5,22 @@ import (
 	"testing"
 )
 
+func TestFormatCount(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		n    int
+		want string
+	}{
+		{0, "0"}, {1, "1"}, {999, "999"}, {1000, "1,000"},
+		{11653, "11,653"}, {1000000, "1,000,000"},
+		{-1, "-1"}, {-1000, "-1,000"}, {-2147483648, "-2,147,483,648"},
+	} {
+		if got := FormatCount(tt.n); got != tt.want {
+			t.Errorf("FormatCount(%d) = %q, want %q", tt.n, got, tt.want)
+		}
+	}
+}
+
 func TestTs_Format(t *testing.T) {
 	t.Parallel()
 	ts := Ts()

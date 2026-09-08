@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,6 +26,64 @@ func verifyTestFiles(src, dst string, buf []byte) error {
 	}
 	defer df.Close()
 	return verifyBytes(context.Background(), sf, df, buf)
+}
+
+func TestCopy_PreservesSpacesInRoots(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("Win32 paths do not preserve trailing spaces")
+	}
+	for _, dryRun := range []bool{true, false} {
+		name := "copy"
+		if dryRun {
+			name = "dry-run"
+		}
+		t.Run(name, func(t *testing.T) {
+			card := filepath.Join(t.TempDir(), "NIKON Z 9  ")
+			dest := filepath.Join(t.TempDir(), "ingest  ")
+			// Both the exact and trimmed names exist, so stripping whitespace
+			// could silently ingest a different card, not just fail to find it.
+			for root, data := range map[string]string{card: "real media", strings.TrimSpace(card): "wrong card"} {
+				if err := os.MkdirAll(filepath.Join(root, "DCIM"), 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(root, "DCIM", "photo.NEF"), []byte(data), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.MkdirAll(strings.TrimSpace(dest), 0755); err != nil {
+				t.Fatal(err)
+			}
+			plan, err := PlanCopy(context.Background(), Options{
+				CardPath: card, DestBase: dest, DryRun: dryRun,
+				FileDates: map[string]string{"photo.NEF": "2026-09-06"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasSuffix(plan.Options.CardPath, "NIKON Z 9  ") || !strings.HasSuffix(plan.Options.DestBase, "ingest  ") {
+				t.Fatalf("roots lost significant spaces: card=%q dest=%q", plan.Options.CardPath, plan.Options.DestBase)
+			}
+			result, err := Execute(context.Background(), plan, nil)
+			if err != nil || result.FilesCopied != 1 {
+				t.Fatalf("Execute = %+v, %v", result, err)
+			}
+			if dryRun {
+				if _, err := os.Stat(dest); !os.IsNotExist(err) {
+					t.Fatalf("dry-run created destination: %v", err)
+				}
+			} else {
+				got, err := os.ReadFile(filepath.Join(dest, "2026-09-06", "photo.NEF"))
+				if err != nil || string(got) != "real media" {
+					t.Fatalf("wrong source/destination: data=%q err=%v", got, err)
+				}
+			}
+			entries, err := os.ReadDir(strings.TrimSpace(dest))
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("trimmed destination was touched: entries=%v err=%v", entries, err)
+			}
+		})
+	}
 }
 
 func TestPlanCopy_RejectsDestinationSymlinkEscape(t *testing.T) {

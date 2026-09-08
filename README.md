@@ -48,6 +48,14 @@ Start cardBot:
 cardbot
 ```
 
+For read-only analysis and copy previews (no media copies or `.cardbot` writes):
+
+```bash
+cardbot --dry-run "/Volumes/Your Card"
+```
+
+Copy commands become previews in this mode; `e` still ejects the card if requested. Quit with `Ctrl+C` to leave the card mounted.
+
 Quit cardBot:
 
 `Ctrl+C`
@@ -97,9 +105,13 @@ cardbot --setup
 
 See [`TODO.md`](TODO.md) for the current technical backlog and discussion items.
 
-Timestamp naming is deterministic across selective copies of the same card. cardBot never replaces an existing destination during ingest. Default `verify_mode=size` skips same-size files without proving content identity; use `advanced.verify_mode=full` for byte-level comparison. Full verification checks the temporary copy before publishing its final filename.
+Timestamp naming is deterministic across selective copies of the same card. It currently refuses cards with more than 9,999 ingest assets, even for selective copies, to prevent sequence rollover; lifting that limit safely is tracked in `TODO.md`. cardBot never replaces an existing destination during ingest. Default `verify_mode=size` skips same-size files without proving content identity; use `advanced.verify_mode=full` for byte-level comparison. Full verification checks the temporary copy before publishing its final filename.
 
 During a copy, cancel with `\` and Enter and wait for completion before ejecting or exiting the card. A pre-existing `.part` file blocks that file's copy rather than being deleted or overwritten automatically.
+
+cardBot never deletes source media or formats cards. A successful ingest may update the card's `.cardbot` history; if that write fails (for example, on a write-protected card), cardBot warns without treating the completed ingest as failed. It does not create write-access probes.
+
+The displayed status describes the **last recorded ingest**, not whether every current file is backed up. “Photos from ingest day” and “Photos from day before ingest” refer to that recorded operation, not today's date. Formatting in the camera erases `.cardbot` along with the media; “No recorded ingest” means no readable record was found, not that the card has never been copied. Verify your destination independently before formatting.
 
 
 ## Uninstalling

@@ -230,6 +230,10 @@ func TestFormatModeLabel(t *testing.T) {
 	}{
 		{"photos", "Photos"},
 		{"videos", "Videos"},
+		{"all", "All files"},
+		{"selects", "Starred files"},
+		{"today", "Photos from ingest day"},
+		{"yesterday", "Photos from day before ingest"},
 		{"étoiles", "Étoiles"},
 		{"", ""},
 	}
@@ -249,14 +253,14 @@ func TestFormatStatus(t *testing.T) {
 		status   Status
 		expected string
 	}{
-		{"new", Status{}, "New"},
+		{"no history", Status{}, "No recorded ingest"},
 		{
 			"all only",
 			Status{
 				Copied:  true,
 				Entries: []CopyEntry{{Mode: "all", Timestamp: time.Date(2026, 3, 12, 12, 0, 0, 0, time.UTC)}},
 			},
-			"Copy completed on 2026-03-12T12:00:00",
+			"Last recorded ingest: 2026-03-12T12:00:00Z — All files",
 		},
 		{
 			"single selective",
@@ -264,7 +268,7 @@ func TestFormatStatus(t *testing.T) {
 				Copied:  true,
 				Entries: []CopyEntry{{Mode: "photos", Timestamp: time.Date(2026, 3, 12, 12, 0, 0, 0, time.UTC)}},
 			},
-			"Photos copied on 2026-03-12T12:00:00",
+			"Last recorded ingest: 2026-03-12T12:00:00Z — Photos",
 		},
 		{
 			"multiple selective",
@@ -275,7 +279,7 @@ func TestFormatStatus(t *testing.T) {
 					{Mode: "videos", Timestamp: time.Date(2026, 3, 12, 14, 0, 0, 0, time.UTC)},
 				},
 			},
-			"Photos + Videos copied on 2026-03-12T14:00:00",
+			"Last recorded ingest: 2026-03-12T14:00:00Z — Videos",
 		},
 		{
 			"empty mode ignored",
@@ -283,10 +287,10 @@ func TestFormatStatus(t *testing.T) {
 				Copied:  true,
 				Entries: []CopyEntry{{Mode: "", Timestamp: time.Date(2026, 3, 12, 15, 0, 0, 0, time.UTC)}},
 			},
-			"Copy completed on 2026-03-12T15:00:00",
+			"Last recorded ingest: 2026-03-12T15:00:00Z — Unspecified selection",
 		},
 		{
-			"all supersedes selective",
+			"latest all",
 			Status{
 				Copied: true,
 				Entries: []CopyEntry{
@@ -294,8 +298,40 @@ func TestFormatStatus(t *testing.T) {
 					{Mode: "all", Timestamp: time.Date(2026, 3, 12, 16, 0, 0, 0, time.UTC)},
 				},
 			},
-			"Copy completed on 2026-03-12T16:00:00",
+			"Last recorded ingest: 2026-03-12T16:00:00Z — All files",
 		},
+		{
+			"old all must not cover newer selective ingest",
+			Status{Copied: true, Entries: []CopyEntry{
+				{Mode: "photos", Timestamp: time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)},
+				{Mode: "all", Timestamp: time.Date(2026, 4, 9, 12, 0, 0, 0, time.UTC)},
+			}},
+			"Last recorded ingest: 2026-09-06T12:00:00Z — Photos",
+		},
+		{
+			"historical today preserves timezone",
+			Status{Copied: true, Entries: []CopyEntry{
+				{Mode: "today", Timestamp: time.Date(2026, 4, 9, 19, 40, 20, 0, time.FixedZone("PDT", -7*60*60))},
+			}},
+			"Last recorded ingest: 2026-04-09T19:40:20-07:00 — Photos from ingest day",
+		},
+		{
+			"historical yesterday",
+			Status{Copied: true, Entries: []CopyEntry{
+				{Mode: "yesterday", Timestamp: time.Date(2026, 4, 9, 12, 0, 0, 0, time.UTC)},
+			}},
+			"Last recorded ingest: 2026-04-09T12:00:00Z — Photos from day before ingest",
+		},
+		{
+			"invalid timestamp cannot broaden valid record",
+			Status{Copied: true, Entries: []CopyEntry{
+				{Mode: "photos", Timestamp: time.Date(2026, 4, 9, 12, 0, 0, 0, time.UTC)},
+				{Mode: "all"},
+			}},
+			"Last recorded ingest: 2026-04-09T12:00:00Z — Photos",
+		},
+		{"no valid entries", Status{Copied: true, Entries: []CopyEntry{{Mode: "all"}}}, "No recorded ingest"},
+		{"empty history", Status{Copied: true}, "No recorded ingest"},
 	}
 
 	for _, tc := range tests {

@@ -2,7 +2,6 @@ package app
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/wdphoto/cardBot/analyze"
@@ -18,6 +17,9 @@ import (
 func (a *App) printCardHeader(card *detect.Card, bodies, lenses []string) {
 	status := dotfile.Read(card.Path)
 	fmt.Printf("  Status:   %s\n", dotfile.FormatStatus(status))
+	if status.Copied {
+		fmt.Println("            Historical record only; current files may not be backed up.")
+	}
 	fmt.Printf("  Path:     %s\n", card.Path)
 	var pct int64
 	if card.TotalBytes > 0 {
@@ -53,7 +55,7 @@ func (a *App) printCardInfo(card *detect.Card, result *analyze.Result) {
 	a.printCardHeader(card, bodies, lenses)
 
 	if result != nil && result.Starred > 0 {
-		fmt.Printf("  Starred:  %d\n", result.Starred)
+		fmt.Printf("  Starred:  %s\n", term.FormatCount(result.Starred))
 	}
 
 	if result != nil && result.FileCount > 0 {
@@ -64,7 +66,7 @@ func (a *App) printCardInfo(card *detect.Card, result *analyze.Result) {
 				maxCount = g.FileCount
 			}
 		}
-		countWidth := len(fmt.Sprintf("%d", maxCount))
+		countWidth := len(term.FormatCount(maxCount))
 
 		for i, g := range result.Groups {
 			if i == 0 {
@@ -72,15 +74,15 @@ func (a *App) printCardInfo(card *detect.Card, result *analyze.Result) {
 			} else {
 				fmt.Printf("            ")
 			}
-			fmt.Printf("%s   %10s   %*d   %s\n",
+			fmt.Printf("%s   %10s   %*s   %s\n",
 				g.Date,
 				fsutil.FormatBytes(g.Size),
 				countWidth,
-				g.FileCount,
+				term.FormatCount(g.FileCount),
 				strings.Join(g.Extensions, ", "))
 		}
 		fmt.Println()
-		fmt.Printf("  Total:    %d photos, %d videos, %s\n", result.PhotoCount, result.VideoCount, fsutil.FormatBytes(result.TotalSize))
+		fmt.Printf("  Total:    %s photos, %s videos, %s\n", term.FormatCount(result.PhotoCount), term.FormatCount(result.VideoCount), fsutil.FormatBytes(result.TotalSize))
 	} else {
 		fmt.Println("  Content:  (empty)")
 	}
@@ -159,16 +161,4 @@ func (a *App) showHardwareInfo(card *detect.Card) {
 	fmt.Println(detect.FormatHardwareInfo(hw))
 	fmt.Println()
 	a.printPrompt()
-}
-
-// cardIsReadOnly probes the card path for write access.
-// Returns true if a temp file cannot be created (write-protected card).
-func cardIsReadOnly(path string) bool {
-	f, err := os.CreateTemp(path, ".cardbot_rw-*")
-	if err != nil {
-		return true
-	}
-	closeErr := f.Close()
-	removeErr := os.Remove(f.Name())
-	return closeErr != nil || removeErr != nil
 }

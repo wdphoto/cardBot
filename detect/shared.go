@@ -9,16 +9,17 @@ import (
 	"syscall"
 )
 
-var (
-	quickHardwareInfoFn = QuickHardwareInfo
-	getHardwareInfoFn   = GetHardwareInfo
-)
-
 // buildCard constructs a Card from a mount path and volume name.
 // Returns nil if filesystem stats cannot be read.
 // Hardware info is fetched in a background goroutine to avoid blocking card detection;
 // it will be available by the time the user presses [i].
 func buildCard(path, name string) *Card {
+	return buildCardWithHardware(path, name, QuickHardwareInfo, GetHardwareInfo)
+}
+
+// Pass lookups per call so tests cannot replace a function used by another
+// card's background enrichment.
+func buildCardWithHardware(path, name string, quick func(string) *HardwareInfo, full func(string) (*HardwareInfo, error)) *Card {
 	var stat syscall.Statfs_t
 	if err := syscall.Statfs(path, &stat); err != nil {
 		return nil
@@ -38,11 +39,11 @@ func buildCard(path, name string) *Card {
 
 	// Pre-populate device ID synchronously (single diskutil/sysfs call)
 	// so it's available immediately for the detection message.
-	card.SetHW(quickHardwareInfoFn(path))
+	card.SetHW(quick(path))
 
 	// Full hardware enrichment in background (includes system_profiler etc.).
 	go func() {
-		if hw, err := getHardwareInfoFn(path); err == nil {
+		if hw, err := full(path); err == nil {
 			card.SetHW(hw)
 		}
 	}()

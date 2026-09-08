@@ -2,6 +2,10 @@ package cmd
 
 import "strings"
 
+func startupMessage(version string) string {
+	return "Starting cardBot v" + strings.TrimPrefix(version, "v")
+}
+
 func boolEnabled(v bool) string {
 	if v {
 		return "enabled"

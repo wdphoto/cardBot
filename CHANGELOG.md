@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Remove speculative card write-access probes; warn only if saving `.cardbot` after an ingest actually fails.
+- Describe status as the latest recorded ingest, with historical selection labels rather than implying current backup coverage.
+- Group displayed file counts, simplify the completed-scan line, and fix duplicate version prefixes at startup.
+- Preserve significant spaces in source/destination paths, fixing planning for Nikon volumes with trailing spaces.
+- Isolate detector hardware-lookup test dependencies to avoid races with background card enrichment.
 - Bind copy completion to its session, queue insertions while cancellation finishes, and require cancellation before exit/eject during copy.
 - Contain destination access with rooted directory handles and reject destination-base replacements between planning and execution.
 - Cancel full verification between reads, verify partial files before publication, and recheck planned skips before reporting completion.

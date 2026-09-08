@@ -2,6 +2,19 @@ package cmd
 
 import "testing"
 
+func TestStartupMessage(t *testing.T) {
+	t.Parallel()
+	for _, version := range []string{"0.0.10", "v0.0.10", "v0.0.10-7-gfa94280"} {
+		want := "Starting cardBot v0.0.10"
+		if version == "v0.0.10-7-gfa94280" {
+			want += "-7-gfa94280"
+		}
+		if got := startupMessage(version); got != want {
+			t.Errorf("startupMessage(%q) = %q, want %q", version, got, want)
+		}
+	}
+}
+
 func TestBoolEnabled(t *testing.T) {
 	t.Parallel()
 

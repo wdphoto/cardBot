@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,33 +18,47 @@ func captureStdout(t *testing.T, fn func()) string {
 	return captureStdoutFD(t, fn)
 }
 
-func TestCardIsReadOnly(t *testing.T) {
-	if cardIsReadOnly(t.TempDir()) {
-		t.Fatal("expected writable temp dir")
+func TestPrintCardInfo_HistoricalStatusAndGroupedCounts(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Output.Color = false
+	a := &App{cfg: cfg, copiedModes: make(map[string]bool)}
+	card := &detect.Card{Path: t.TempDir()}
+	path := filepath.Join(card.Path, ".cardbot")
+	record := `{"$schema":"cardbot-dotfile-v2","copies":[{"mode":"today","timestamp":"2026-04-09T19:40:20-07:00"}]}`
+	if err := os.WriteFile(path, []byte(record), 0600); err != nil {
+		t.Fatal(err)
 	}
-
-	missing := filepath.Join(t.TempDir(), "missing")
-	if !cardIsReadOnly(missing) {
-		t.Fatal("expected missing dir to be treated as read-only")
+	out := captureStdout(t, func() {
+		a.printCardInfo(card, &analyze.Result{
+			FileCount: 11653, PhotoCount: 11653, Starred: 1234,
+			Groups: []analyze.DateGroup{{Date: "2026-09-06", FileCount: 11653}},
+		})
+	})
+	for _, want := range []string{
+		"Last recorded ingest: 2026-04-09T19:40:20-07:00 — Photos from ingest day",
+		"Historical record only; current files may not be backed up.",
+		"Total:    11,653 photos, 0 videos", "Starred:  1,234", "   11,653   ",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in output:\n%s", want, out)
+		}
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != record {
+		t.Fatalf("display changed history: data=%q err=%v", got, err)
 	}
 }
 
-func TestCardIsReadOnly_PreservesExistingProbe(t *testing.T) {
-	card := t.TempDir()
-	probe := filepath.Join(card, ".cardbot_rw")
-	if err := os.WriteFile(probe, []byte("existing file"), 0600); err != nil {
-		t.Fatal(err)
+func TestDisplayCard_CompletedScanWording(t *testing.T) {
+	a, _, card := newLifecycleApp(t, nil)
+	a.newAnalyzer = func(string) cardAnalyzer {
+		return &fakeAnalyzer{result: &analyze.Result{FileCount: 11653, PhotoCount: 11653}}
 	}
-	if cardIsReadOnly(card) {
-		t.Fatal("expected writable card")
-	}
-	got, err := os.ReadFile(probe)
-	if err != nil || string(got) != "existing file" {
-		t.Fatalf("probe changed existing file: data=%q err=%v", got, err)
-	}
-	entries, err := os.ReadDir(card)
-	if err != nil || len(entries) != 1 {
-		t.Fatalf("probe left temporary files: entries=%v err=%v", entries, err)
+	out := captureStdout(t, func() {
+		a.displayCard(context.Background(), card.Path, term.DimTS("scan"))
+	})
+	if !strings.Contains(out, "Scanned 11,653 files in ") || strings.Contains(out, "Scan completed in") {
+		t.Fatalf("expected one completed-scan line with grouped count:\n%s", out)
 	}
 }
 
@@ -77,7 +92,7 @@ func TestPrintCardInfo(t *testing.T) {
 	})
 
 	for _, want := range []string{
-		"Status:", "Path:", "Storage:", "Gear:", "Starred:", "Content:",
+		"Status:", "No recorded ingest", "Path:", "Storage:", "Gear:", "Starred:", "Content:",
 		"Total:", "Copy to:", "Naming:", "[a] Copy All",
 		"NIKON Z 9", "NIKKOR Z 24-70mm f/2.8 S",
 	} {

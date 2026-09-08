@@ -52,13 +52,6 @@ func (a *App) copyFiltered(ctx context.Context, cancel context.CancelFunc, card 
 		return
 	}
 
-	// Warn if the card is write-protected — dotfile won't be written after copy.
-	// (Skip warning in dry-run since we're not writing anyway.)
-	if !isDryRun && cardIsReadOnly(card.Path) {
-		fmt.Printf("\n%s Warning: card appears to be write-protected — copy status will not be saved to card\n", a.TsPrefix())
-		a.logf("Card %s appears write-protected", card.Path)
-	}
-
 	// Human-readable mode label for output.
 	var modeLabel string
 	switch mode {
@@ -215,7 +208,7 @@ func (a *App) handleCopyDone(out copyOutcome) {
 	case removed:
 		if errors.Is(out.err, context.Canceled) {
 			a.printMu.Lock()
-			fmt.Printf("\n%s Copy stopped — card removed. %d files copied.\n", term.DimTS(term.Ts()), copied)
+			fmt.Printf("\n%s Copy stopped — card removed. %s files copied.\n", term.DimTS(term.Ts()), term.FormatCount(copied))
 			a.printMu.Unlock()
 			a.logf("Copy stopped: card removed. %d files copied.", copied)
 		} else if out.err != nil {
@@ -224,7 +217,7 @@ func (a *App) handleCopyDone(out copyOutcome) {
 	case errors.Is(out.err, context.Canceled):
 		if sameCard {
 			a.printMu.Lock()
-			fmt.Printf("\n%s Copy cancelled — %d files copied.\n", term.DimTS(term.Ts()), copied)
+			fmt.Printf("\n%s Copy cancelled — %s files copied.\n", term.DimTS(term.Ts()), term.FormatCount(copied))
 			a.printMu.Unlock()
 			a.logf("Copy cancelled. %d files copied.", copied)
 			a.drainInput()
@@ -234,7 +227,7 @@ func (a *App) handleCopyDone(out copyOutcome) {
 		a.printMu.Lock()
 		fmt.Printf("\n%s Copy failed: %s\n", term.DimTS(term.Ts()), term.FriendlyErr(out.err))
 		if out.result != nil && out.result.FilesCopied > 0 {
-			fmt.Printf("%s %d files copied before failure.\n", term.DimTS(term.Ts()), out.result.FilesCopied)
+			fmt.Printf("%s %s files copied before failure.\n", term.DimTS(term.Ts()), term.FormatCount(out.result.FilesCopied))
 		}
 		a.printMu.Unlock()
 		a.logf("Copy failed: %v", out.err)
@@ -273,12 +266,12 @@ func (a *App) handleCopySuccess(card *detect.Card, mode, destBase string, result
 	if isDryRun {
 		a.printMu.Lock()
 		fmt.Printf("%s Dry-run complete ✓\n", term.DimTS(term.Ts()))
-		fmt.Printf("%s %d files, %s would be copied\n",
+		fmt.Printf("%s %s files, %s would be copied\n",
 			term.DimTS(term.Ts()),
-			result.FilesCopied,
+			term.FormatCount(result.FilesCopied),
 			fsutil.FormatBytes(result.BytesCopied))
 		if previewHidden > 0 {
-			fmt.Printf("%s ... +%d more files (preview capped at %d)\n", term.DimTS(term.Ts()), previewHidden, dryRunPreviewLimit)
+			fmt.Printf("%s ... +%s more files (preview capped at %s)\n", term.DimTS(term.Ts()), term.FormatCount(previewHidden), term.FormatCount(dryRunPreviewLimit))
 		}
 		a.printMu.Unlock()
 		a.logf("Dry-run complete: %d files, %s would be copied", result.FilesCopied, fsutil.FormatBytes(result.BytesCopied))
@@ -288,21 +281,21 @@ func (a *App) handleCopySuccess(card *detect.Card, mode, destBase string, result
 	a.printMu.Lock()
 	fmt.Printf("\r%s Copy complete ✓                                          \n", term.DimTS(term.Ts()))
 	if result.FilesSkipped > 0 && result.FilesCopied == 0 {
-		fmt.Printf("%s All %d files already copied. Nothing to do.\n",
+		fmt.Printf("%s All %s files already copied. Nothing to do.\n",
 			term.DimTS(term.Ts()),
-			result.FilesSkipped)
+			term.FormatCount(result.FilesSkipped))
 	} else if result.FilesSkipped > 0 {
-		fmt.Printf("%s %d files, %s copied in %s (%.1f MB/s) — %d files skipped\n",
+		fmt.Printf("%s %s files, %s copied in %s (%.1f MB/s) — %s files skipped\n",
 			term.DimTS(term.Ts()),
-			result.FilesCopied,
+			term.FormatCount(result.FilesCopied),
 			fsutil.FormatBytes(result.BytesCopied),
 			elapsed,
 			speed,
-			result.FilesSkipped)
+			term.FormatCount(result.FilesSkipped))
 	} else {
-		fmt.Printf("%s %d files, %s copied in %s (%.1f MB/s)\n",
+		fmt.Printf("%s %s files, %s copied in %s (%.1f MB/s)\n",
 			term.DimTS(term.Ts()),
-			result.FilesCopied,
+			term.FormatCount(result.FilesCopied),
 			fsutil.FormatBytes(result.BytesCopied),
 			elapsed,
 			speed)
@@ -326,7 +319,7 @@ func (a *App) handleCopySuccess(card *detect.Card, mode, destBase string, result
 		CardbotVersion:     a.version,
 	})
 	if dotErr != nil {
-		fmt.Printf("%s Warning: could not write .cardbot to card: %s\n", a.TsPrefix(), term.FriendlyErr(dotErr))
+		fmt.Printf("%s Warning: ingest completed, but could not save .cardbot on card: %v\n", a.TsPrefix(), dotErr)
 		a.logf("Dotfile write failed: %v", dotErr)
 	} else {
 		a.logf("Dotfile written to %s", card.Path)

@@ -396,11 +396,11 @@ func runInteractive(ctx context.Context, info BuildInfo, v *viper.Viper, flags *
 	// Step 1: Starting cardBot.
 	ts1 := term.Ts()
 	s := spinner.New(spinner.CharSets[9], 100*time.Millisecond)
-	s.Prefix = fmt.Sprintf("%s Starting cardBot v%s ", term.DimTS(ts1), info.Version)
+	s.Prefix = fmt.Sprintf("%s %s ", term.DimTS(ts1), startupMessage(info.Version))
 	s.Start()
 	time.Sleep(300 * time.Millisecond)
 	s.Stop()
-	fmt.Printf("\r%s Starting cardBot v%s ✓%s\n", term.DimTS(ts1), info.Version, clearEOL)
+	fmt.Printf("\r%s %s ✓%s\n", term.DimTS(ts1), startupMessage(info.Version), clearEOL)
 
 	// What's new: show changelog on first run of a new version.
 	if cfg.Meta.LastSeenVersion == "" {

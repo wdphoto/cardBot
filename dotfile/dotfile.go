@@ -54,7 +54,7 @@ type dotfileSchemaV2 struct {
 }
 
 // Read checks for a .cardbot file on the card and returns its status.
-// Returns a "New" status (Copied=false) if the file doesn't exist or can't be parsed.
+// Returns no recorded history (Copied=false) if the file doesn't exist or can't be parsed.
 // Automatically migrates v1 schemas to a single-entry v2 representation in memory.
 func Read(cardPath string) Status {
 	data, err := os.ReadFile(filepath.Join(cardPath, fileName))
@@ -211,48 +211,40 @@ func Write(opts WriteOptions) error {
 	return os.Rename(tmp, target)
 }
 
-// FormatStatus returns a display string for the card status according to v2 rules.
-// E.g.: "New", "Copied on ...", "Photos copied on ...", "Photos + Videos copied on ..."
+// FormatStatus describes the most recent valid ingest record, not whether the
+// card's current contents are backed up. Modes from different ingests must not
+// be combined under one timestamp.
 func FormatStatus(s Status) string {
-	if !s.Copied || len(s.Entries) == 0 {
-		return "New"
-	}
-
-	var latest time.Time
-	hasAll := false
-	var modes []string
-
-	for _, e := range s.Entries {
-		if e.Timestamp.After(latest) {
-			latest = e.Timestamp
-		}
-		if e.Mode == "all" {
-			hasAll = true
-			continue
-		}
-		if titleMode := formatModeLabel(e.Mode); titleMode != "" {
-			modes = append(modes, titleMode)
+	var latest CopyEntry
+	if s.Copied {
+		for _, e := range s.Entries {
+			if e.Timestamp.After(latest.Timestamp) {
+				latest = e
+			}
 		}
 	}
-
-	ts := latest.Format("2006-01-02T15:04:05")
-
-	if hasAll {
-		return "Copy completed on " + ts
+	if latest.Timestamp.IsZero() {
+		return "No recorded ingest"
 	}
-
-	if len(modes) == 1 {
-		return modes[0] + " copied on " + ts
+	label := formatModeLabel(latest.Mode)
+	if label == "" {
+		label = "Unspecified selection"
 	}
-	if len(modes) == 0 {
-		return "Copy completed on " + ts
-	}
-
-	return strings.Join(modes, " + ") + " copied on " + ts
+	return "Last recorded ingest: " + latest.Timestamp.Format(time.RFC3339) + " — " + label
 }
 
 // formatModeLabel normalizes a copy mode key for user-facing display.
 func formatModeLabel(mode string) string {
+	switch mode {
+	case "all":
+		return "All files"
+	case "selects":
+		return "Starred files"
+	case "today":
+		return "Photos from ingest day"
+	case "yesterday":
+		return "Photos from day before ingest"
+	}
 	if mode == "" {
 		return ""
 	}

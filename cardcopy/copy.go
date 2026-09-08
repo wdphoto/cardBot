@@ -542,12 +542,11 @@ func Execute(ctx context.Context, plan *Plan, onProgress ProgressFunc) (*Result,
 }
 
 func normalizeCopyRoots(cardPath, destBase string) (string, string, error) {
-	cardPath = strings.TrimSpace(cardPath)
-	if cardPath == "" {
+	// Reject blank input without stripping significant spaces from filesystem names.
+	if strings.TrimSpace(cardPath) == "" {
 		return "", "", fmt.Errorf("card path is required")
 	}
-	destBase = strings.TrimSpace(destBase)
-	if destBase == "" {
+	if strings.TrimSpace(destBase) == "" {
 		return "", "", fmt.Errorf("destination path is required")
 	}
 

@@ -3,9 +3,27 @@
 package term
 
 import (
+	"strconv"
 	"strings"
 	"time"
 )
+
+// FormatCount groups decimal digits with commas for human-readable counts.
+func FormatCount(n int) string {
+	s := strconv.Itoa(n)
+	var b strings.Builder
+	if strings.HasPrefix(s, "-") {
+		b.WriteByte('-')
+		s = s[1:]
+	}
+	for i := range len(s) {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			b.WriteByte(',')
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
+}
 
 // Ts returns the current timestamp formatted for log output.
 func Ts() string {

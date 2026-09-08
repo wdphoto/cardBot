@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/wdphoto/cardBot/fsutil"
+	"github.com/wdphoto/cardBot/term"
 )
 
 // throughputTracker computes smoothed throughput and ETA using an exponential
@@ -126,10 +127,10 @@ func formatThroughput(bps float64) string {
 }
 
 // FormatProgressLine renders the copy progress as a single-line string.
-// Example: "Copying  1247/3051  48.2 GB/96.4 GB  182 MB/s  ETA 4m12s"
+// Example: "Copying  1,247/3,051  48.2 GB/96.4 GB  182 MB/s  ETA 4m12s"
 func FormatProgressLine(p Progress) string {
-	line := fmt.Sprintf("Copying  %d/%d  %s/%s  %s",
-		p.FilesDone, p.FilesTotal,
+	line := fmt.Sprintf("Copying  %s/%s  %s/%s  %s",
+		term.FormatCount(p.FilesDone), term.FormatCount(p.FilesTotal),
 		fsutil.FormatBytes(p.BytesDone),
 		fsutil.FormatBytes(p.BytesTotal),
 		formatThroughput(p.SmoothedBPS),
