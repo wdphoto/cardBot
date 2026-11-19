@@ -458,6 +458,60 @@ func TestPlanCopy_TimestampNameStableAcrossFilters(t *testing.T) {
 	}
 }
 
+func TestDifferentlyDatedPairKeepsOneStemAcrossSelections(t *testing.T) {
+	for _, mode := range []string{"original", "timestamp"} {
+		t.Run(mode, func(t *testing.T) {
+			early, late := date(2026, 4, 1), date(2026, 4, 2)
+			card := createTestCard(t, map[string]testFileSpec{
+				"A.NEF": {data: []byte("raw"), mtime: late},
+				"A.JPG": {data: []byte("jpeg"), mtime: late},
+				"A.XMP": {data: []byte("rating"), mtime: late},
+			})
+			opts := Options{CardPath: card, DestBase: t.TempDir(), NamingMode: mode,
+				FileDateTimes: map[string]time.Time{"A.JPG": early}, Filter: func(_, ext string) bool { return ext == "NEF" }}
+			stem, oldStem := "A", "A"
+			if mode == "timestamp" {
+				stem = "260401T120000_0001"
+				oldStem = "260402T120000_0001"
+			}
+			// Model a previously ingested RAW at the old later-day path.
+			old := filepath.Join(opts.DestBase, "2026-04-02", oldStem+".NEF")
+			if err := os.MkdirAll(filepath.Dir(old), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(old, []byte("legacy"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			for pass := range 2 {
+				wantCopied, wantSkipped := 2, 0
+				if pass == 1 {
+					opts.Filter = nil
+					wantCopied, wantSkipped = 1, 2
+				}
+				res, err := Run(context.Background(), opts, nil)
+				if err != nil || res.FilesCopied != wantCopied || res.FilesSkipped != wantSkipped {
+					t.Fatalf("pass %d: %+v %v", pass, res, err)
+				}
+				for _, ext := range []string{".NEF", ".XMP", ".JPG"} {
+					_, err := os.Stat(filepath.Join(opts.DestBase, "2026-04-01", stem+ext))
+					if pass == 0 && ext == ".JPG" {
+						if !os.IsNotExist(err) {
+							t.Fatal("unselected JPEG copied")
+						}
+						continue
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if got, err := os.ReadFile(old); err != nil || string(got) != "legacy" {
+				t.Fatalf("old ingest modified: %q %v", got, err)
+			}
+		})
+	}
+}
+
 func TestCopy_TimestampNamingPreservesSidecarBasename(t *testing.T) {
 	t.Parallel()
 	card := createTestCard(t, map[string]testFileSpec{

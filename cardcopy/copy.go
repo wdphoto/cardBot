@@ -196,12 +196,12 @@ func PlanCopy(ctx context.Context, opts Options) (*Plan, error) {
 
 		// Use EXIF date/time if available, fall back to mtime.
 		captureTime := info.ModTime()
+		if exifDateTime, ok := exifDateTimes[rel]; ok && !exifDateTime.IsZero() {
+			captureTime = exifDateTime
+		}
 		date := captureTime.Format("2006-01-02")
 		if exifDate, ok := exifDates[rel]; ok {
 			date = exifDate
-		}
-		if exifDateTime, ok := exifDateTimes[rel]; ok && !exifDateTime.IsZero() {
-			captureTime = exifDateTime
 		}
 
 		files = append(files, fileEntry{
@@ -251,11 +251,13 @@ func PlanCopy(ctx context.Context, opts Options) (*Plan, error) {
 	}
 	for i := range files {
 		f := &files[i]
-		if sidecarExts[f.ext] {
-			if state := assets[f.assetKey]; state != nil && state.hasPrimary {
+		// Every member uses the earliest primary's date/stem, even when
+		// that primary is filtered out. Only sidecars inherit selection.
+		if state := assets[f.assetKey]; state != nil {
+			f.captureTime = state.captureTime
+			f.date = state.date
+			if sidecarExts[f.ext] {
 				f.selected = state.selected
-				f.captureTime = state.captureTime
-				f.date = state.date
 			}
 		}
 		if f.selected {

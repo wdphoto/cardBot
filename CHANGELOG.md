@@ -19,7 +19,7 @@
 - Contain destination access with rooted directory handles and reject destination-base replacements between planning and execution.
 - Cancel full verification between reads, verify partial files before publication, and recheck planned skips before reporting completion.
 - Refuse non-identical destination conflicts and use no-replace final commits.
-- Keep timestamp names stable across selective modes and ingest sidecars with their primary media.
+- Same-stem primaries (such as RAW+JPEG) and their sidecars use the earliest primary's capture time, falling back to file modification time when EXIF is missing. This keeps their folder and timestamp stem together even if only one primary is selected. Existing backups are never renamed or removed; re-ingesting a formerly split pair can create a second copy at its corrected path.
 - Preserve malformed/future configuration files and save valid configuration atomically.
 - Simplify copy cancellation/event ownership and enforce a real daemon singleton.
 - Harden macOS detector lifecycle, updater validation, install/uninstall safety, logging, CI, and release provenance.
