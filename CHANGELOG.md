@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## 0.10.0
+## 0.0.11
 
 - An unreadable part of a card or a file that changed size after planning can no longer earn a successful ingest receipt. Fix the cause and retry.
 - Reject destinations on the source card, including paths that differ only in case. Replacing a card at the same mount path cannot give the new card the previous card’s scan or receipt.
@@ -16,7 +16,7 @@
 - Refresh SHA-pinned CI/release actions for native Node.js 24 without broadening workflow permissions.
 - Harden headless daemon startup, preserve unreadable daemon configuration, and correctly encode executable paths in login plists; add isolated daemon/login lifecycle QA.
 - Require Go 1.26.11 or newer for source builds. CI and release builds use the patched toolchain specified in `go.mod`.
-- Source builds use `VERSION`; published binaries use the release tag. `v0.10.0` sorts above both historical release lines (`v0.0.10` and `v0.9.0`) without changing old tags.
+- Continue the `0.0.x` patch line toward `0.1.0`. `0.0.10` users can update normally once this patch is published. Users of older, higher-numbered releases can opt in with the installer; `self-update` will not downgrade them.
 - Support timestamp naming beyond 9,999 assets, including selective copies: sequence suffixes grow past four digits without rollover or changing existing mappings.
 - Remove speculative card write-access probes; warn only if saving `.cardbot` after an ingest actually fails.
 - Describe status as the latest recorded ingest, with historical selection labels rather than implying current backup coverage.

@@ -9,7 +9,7 @@ import (
 )
 
 func FuzzVersions(f *testing.F) {
-	for _, pair := range [][2]string{{"v0.0.10", "v0.10.0"}, {"0.9.0", "0.10.0-dev"}, {"1.2.3-alpha.2", "1.2.3-alpha.10"}, {"v1.2.3+build", "V1.2.3"}, {"garbage", "1.2"}} {
+	for _, pair := range [][2]string{{"v0.0.10", "v0.0.11"}, {"0.9.0", "0.0.11-dev"}, {"0.0.11", "v0.1.0"}, {"1.2.3-alpha.2", "1.2.3-alpha.10"}, {"v1.2.3+build", "V1.2.3"}, {"garbage", "1.2"}} {
 		f.Add(pair[0], pair[1])
 	}
 	f.Fuzz(func(t *testing.T, a, b string) {

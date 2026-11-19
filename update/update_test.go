@@ -27,10 +27,10 @@ func TestCompareVersions(t *testing.T) {
 		{"1.2.0", "1.2.0", 0},
 		{"1.2.0", "1.2.0-rc.1", 1},
 		{"1.2.0-rc.2", "1.2.0-rc.10", -1},
-		{"0.10.0", "0.0.10", 1},
-		{"0.10.0", "v0.9.0", 1},
-		{"0.10.0", "0.10.0-dev", 1},
-		{"0.10.0-dev", "v0.9.0", 1},
+		{"0.0.11", "0.0.10", 1},
+		{"0.0.11", "0.0.11-dev", 1},
+		{"0.1.0", "0.0.11", 1},
+		{"0.0.11", "v0.9.0", -1},
 	}
 
 	for _, tt := range tests {
@@ -115,14 +115,16 @@ func TestCheckLatest_VersionTransition(t *testing.T) {
 		current, latest string
 		wantUpdate      bool
 	}{
-		{"0.0.10", "v0.10.0", true},
-		{"v0.9.0", "v0.10.0", true},
-		{"v0.0.10-9-g80c625d", "v0.10.0", true},
-		{"0.10.0-dev", "v0.10.0", true},
-		{"0.10.0", "v0.10.0", false},
-		{"0.10.0-dev", "v0.0.10", false},
-		{"0.10.0-dev", "v0.9.0", false},
-		{"0.9.0", "v0.0.10", false},
+		{"0.0.10", "v0.0.11", true},
+		{"v0.0.10-9-g80c625d", "v0.0.11", true},
+		{"0.0.11-dev", "v0.0.11", true},
+		{"0.0.11", "v0.0.11", false},
+		{"0.0.11-dev", "v0.0.10", false},
+		{"0.0.11", "v0.1.0", true},
+		{"v0.1.2", "v0.1.0", false},
+		{"v0.8.3", "v0.0.11", false},
+		{"v0.9.0", "v0.0.11", false},
+		{"0.10.0-dev", "v0.0.11", false},
 	} {
 		t.Run(tt.current+" to "+tt.latest, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -150,7 +152,7 @@ func TestSelfUpdateForPlatform(t *testing.T) {
 		switch r.URL.Path {
 		case "/repos/owner/repo/releases/latest":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"tag_name": "v0.10.0",
+				"tag_name": "v0.0.11",
 				"assets": []map[string]string{
 					{"name": "cardbot-darwin-arm64", "browser_download_url": serverURL + "/assets/cardbot-darwin-arm64"},
 					{"name": "checksums.txt", "browser_download_url": serverURL + "/assets/checksums.txt"},
@@ -167,7 +169,7 @@ func TestSelfUpdateForPlatform(t *testing.T) {
 	defer srv.Close()
 	serverURL = srv.URL
 
-	for _, current := range []string{"0.2.0", "0.0.10", "v0.9.0", "0.10.0-dev"} {
+	for _, current := range []string{"0.0.10", "0.0.11-dev"} {
 		t.Run(current, func(t *testing.T) {
 			execPath := filepath.Join(t.TempDir(), "cardbot")
 			if err := os.WriteFile(execPath, []byte("old-binary"), 0755); err != nil {
@@ -179,8 +181,8 @@ func TestSelfUpdateForPlatform(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if installed != "0.10.0" {
-				t.Fatalf("installed = %q, want 0.10.0", installed)
+			if installed != "0.0.11" {
+				t.Fatalf("installed = %q, want 0.0.11", installed)
 			}
 			got, err := os.ReadFile(execPath)
 			if err != nil {
@@ -193,25 +195,30 @@ func TestSelfUpdateForPlatform(t *testing.T) {
 	}
 }
 
-func TestSelfUpdateAlreadyUpToDate(t *testing.T) {
+func TestSelfUpdateDoesNotReinstallOrDowngrade(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"tag_name": "v0.2.0",
-			"assets":   []any{},
-		})
+		if r.URL.Path != "/repos/owner/repo/releases/latest" {
+			t.Errorf("unexpected asset request: %s", r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(Release{TagName: "v0.0.11"})
 	}))
 	defer srv.Close()
 
-	execPath := filepath.Join(t.TempDir(), "cardbot")
-	if err := os.WriteFile(execPath, []byte("old"), 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	_, err := SelfUpdateForPlatform(ctx, srv.Client(), srv.URL, "owner/repo", "0.2.0", execPath, "darwin", "arm64")
-	if err == nil || err != ErrAlreadyUpToDate {
-		t.Fatalf("expected ErrAlreadyUpToDate, got %v", err)
+	for _, current := range []string{"0.0.11", "0.1.2", "0.8.3", "0.9.0", "0.10.0-dev"} {
+		t.Run(current, func(t *testing.T) {
+			execPath := filepath.Join(t.TempDir(), "cardbot")
+			if err := os.WriteFile(execPath, []byte("keep"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			installed, err := SelfUpdateForPlatform(t.Context(), srv.Client(), srv.URL, "owner/repo", current, execPath, "darwin", "arm64")
+			if err != ErrAlreadyUpToDate || installed != "" {
+				t.Fatalf("got (%q, %v), want no install and ErrAlreadyUpToDate", installed, err)
+			}
+			if got, err := os.ReadFile(execPath); err != nil || string(got) != "keep" {
+				t.Fatalf("existing binary changed: %q, %v", got, err)
+			}
+		})
 	}
 }

@@ -107,11 +107,20 @@ jobs:
       - name: Show release files
         run: ls -lah artifacts
 
+      # A newer patch may have been tagged while the builds ran, or this job
+      # may be retried without rerunning validate-tag. Don't move Latest back.
+      - name: Recheck the release line before publication
+        shell: bash
+        run: |
+          git ls-remote --refs --tags origin 'v*' | awk -F'refs/tags/' '{print $2}' |
+            bash scripts/check-release-version.sh "$GITHUB_REF_NAME" "$(< VERSION)"
+
       - name: Create Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           files: artifacts/*
           generate_release_notes: true
+          make_latest: 'true' # The active patch line is below several historical tags.
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

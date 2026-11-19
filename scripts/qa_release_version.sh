@@ -18,26 +18,37 @@ check() {
   fi
 }
 
-history=$'v0.0.10\nv0.8.3\nv0.9.0'
-check pass v0.10.0 0.10.0-dev "$history"
-check pass v0.10.0 0.10.0-dev "$history"$'\nv0.10.0'
-check pass v0.10.1 0.10.1-dev "$history"$'\nv0.10.0'
+# The actual public baseline includes six higher, pre-baseline tags. No
+# unrecognised tag is exempt, even if it is next to one of the reserved names.
+legacy=(v0.1.2 v0.8.0 v0.8.1 v0.8.2 v0.8.3 v0.9.0)
+history=$(printf '%s\n' v0.0.10 "${legacy[@]}")
+check pass v0.0.11 0.0.11-dev "$history"
+check pass v0.0.11 0.0.11-dev "$history"$'\nv0.0.11' # workflow rerun
+check pass v0.0.12 0.0.12-dev "$history"$'\nv0.0.11'
+check pass v0.1.0 0.1.0-dev "$history"$'\nv0.0.11\nv0.0.12'
+check pass v0.1.3 0.1.3-dev "$history"$'\nv0.1.0\nv0.1.1' # v0.1.2 stays reserved
 check pass v1.0.0 1.0.0-dev "$history"$'\nv0.99.99'
-check pass v0.10.0 0.10.0-dev ''
-check pass v0.10.0 0.10.0-dev "$history"$'\nv0.11.0-rc.1\nother-tag'
-check fail v0.0.11 0.0.11-dev "$history"
-check fail v0.10.0 0.10.0-dev "$history"$'\nv0.10.1'
-check fail v0.10.0 0.10.0-dev 'v0.100.0'
-check fail v0.11.0 0.10.0-dev "$history"
-check fail v0.10.0 0.10.0 "$history"
-check fail v0.10.0 v0.10.0-dev "$history"
-check fail v0.10.0 0.10.0-dev.1 "$history"
-for invalid in 0.10.0 v0.10 v0.010.0 v0.10.00 v0.10.0-rc.1 v0.10.0+build v0.10.0junk; do
+check pass v0.0.11 0.0.11-dev "$history"$'\nv0.1.0-rc.1\nother-tag'
+
+for reserved in v0.0.10 "${legacy[@]}"; do
+  check fail "$reserved" "${reserved#v}-dev" "$history"
+done
+check fail v0.0.9 0.0.9-dev "$history"
+check fail v0.0.11 0.0.11-dev "$history"$'\nv0.0.12'
+check fail v0.0.11 0.0.11-dev "$history"$'\nv0.1.0'
+check fail v0.1.0 0.1.0-dev "$history"$'\nv0.8.4'
+check fail v0.1.0 0.1.0-dev "$history"$'\nv0.9.1'
+check fail v0.0.11 0.0.11-dev ''
+check fail v0.0.11 0.0.11-dev 'v0.9.0'
+check fail v0.10.0 0.0.11-dev "$history"
+check fail v0.0.11 0.0.11 "$history"
+check fail v0.0.11 v0.0.11-dev "$history"
+check fail v0.0.11 0.0.11-dev.1 "$history"
+for invalid in 0.0.11 v0.11 v0.00.11 v0.0.011 v0.0.11-rc.1 v0.0.11+build v0.0.11junk; do
   check fail "$invalid" "${invalid#v}-dev" "$history"
 done
 
-# Also validate the source default. Historical fixtures ensure this checkout
-# cannot silently return to the pre-0.9 numbering line.
+# The checked-in development version must also produce a valid candidate.
 development_version="$(< "$script_dir/../VERSION")"
 check pass "v${development_version%-dev}" "$development_version" "$history"
 printf 'Release version policy checks passed\n'

@@ -38,7 +38,7 @@ func TestSelfUpdate_FailuresPreserveExecutable(t *testing.T) {
 				var body io.Reader
 				switch r.URL.String() {
 				case base + "/repos/owner/repo/releases/latest":
-					metadata, err := json.Marshal(Release{TagName: "v0.10.0", Assets: []Asset{
+					metadata, err := json.Marshal(Release{TagName: "v0.0.11", Assets: []Asset{
 						{Name: "cardbot-darwin-arm64", URL: base + "/binary"},
 						{Name: "checksums.txt", URL: base + "/sums"},
 					}})
@@ -62,7 +62,7 @@ func TestSelfUpdate_FailuresPreserveExecutable(t *testing.T) {
 				}
 				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body), Header: make(http.Header)}, nil
 			})}
-			installed, err := SelfUpdateForPlatform(context.Background(), client, base, "owner/repo", "0.9.0", executable, "darwin", "arm64")
+			installed, err := SelfUpdateForPlatform(context.Background(), client, base, "owner/repo", "0.0.10", executable, "darwin", "arm64")
 			if err == nil || installed != "" {
 				t.Fatalf("failed update reported success: %q, %v", installed, err)
 			}
