@@ -144,7 +144,11 @@ func PlanCopy(ctx context.Context, opts Options) (*Plan, error) {
 
 	// Planning must not create the destination. When it exists, inspect it
 	// through a directory handle so descendant symlinks cannot escape it.
-	destination, destRoot, err := planDestination(destBase)
+	sourceInfo, err := os.Stat(cardPath)
+	if err != nil {
+		return nil, fmt.Errorf("inspecting source card: %w", err)
+	}
+	destination, destRoot, err := planDestination(destBase, sourceInfo)
 	if err != nil {
 		return nil, err
 	}

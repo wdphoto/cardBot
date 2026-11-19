@@ -86,6 +86,37 @@ func TestCopy_PreservesSpacesInRoots(t *testing.T) {
 	}
 }
 
+func TestPlanCopy_DestinationCaseIdentity(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	card, alt := filepath.Join(dir, "Card"), filepath.Join(dir, "CARD")
+	if err := os.MkdirAll(filepath.Join(card, "DCIM"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	// The same fixture exercises a real alias on default APFS, and distinct
+	// same-device sibling directories on a case-sensitive filesystem.
+	_, err := os.Stat(alt)
+	alias := err == nil
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(alt, "existing"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, base := range []string{alt, filepath.Join(alt, "existing"), filepath.Join(alt, "missing", "nested")} {
+		_, err := PlanCopy(context.Background(), Options{CardPath: card, DestBase: base})
+		if alias && (err == nil || !strings.Contains(err.Error(), "inside source card")) {
+			t.Fatalf("accepted on-card alias %s: %v", base, err)
+		}
+		if !alias && err != nil {
+			t.Fatalf("rejected distinct sibling %s: %v", base, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(alt, "missing")); !os.IsNotExist(err) {
+		t.Fatalf("planning touched a missing base: %v", err)
+	}
+}
+
 func TestPlanCopy_RejectsDestinationSymlinkEscape(t *testing.T) {
 	t.Parallel()
 	for _, existing := range []bool{false, true} {

@@ -14,9 +14,31 @@ type destinationLocation struct {
 	basePath     string
 	ancestorPath string
 	ancestorInfo os.FileInfo
+	sourceInfo   os.FileInfo
 }
 
-func planDestination(base string) (destinationLocation, *os.Root, error) {
+// Check identities, not just spellings: on common macOS volumes, CARD and
+// Card name the same directory. A missing base still has an existing anchor.
+func (d destinationLocation) checkOutsideCard() error {
+	path, info := d.ancestorPath, d.ancestorInfo
+	for {
+		if os.SameFile(info, d.sourceInfo) {
+			return fmt.Errorf("destination %s is inside source card", d.basePath)
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return nil
+		}
+		var err error
+		info, err = os.Stat(parent)
+		if err != nil {
+			return fmt.Errorf("inspecting destination ancestor %s: %w", parent, err)
+		}
+		path = parent
+	}
+}
+
+func planDestination(base string, sourceInfo os.FileInfo) (destinationLocation, *os.Root, error) {
 	for path := base; ; path = filepath.Dir(path) {
 		root, err := os.OpenRoot(path)
 		if os.IsNotExist(err) && filepath.Dir(path) != path {
@@ -30,7 +52,11 @@ func planDestination(base string) (destinationLocation, *os.Root, error) {
 			root.Close()
 			return destinationLocation{}, nil, fmt.Errorf("inspecting destination: %w", err)
 		}
-		location := destinationLocation{basePath: base, ancestorPath: path, ancestorInfo: info}
+		location := destinationLocation{basePath: base, ancestorPath: path, ancestorInfo: info, sourceInfo: sourceInfo}
+		if err := location.checkOutsideCard(); err != nil {
+			root.Close()
+			return destinationLocation{}, nil, err
+		}
 		if path == base {
 			return location, root, nil
 		}
@@ -52,6 +78,10 @@ func (d destinationLocation) open() (*os.Root, error) {
 		root.Close()
 		return nil, fmt.Errorf("destination directory changed after planning: %s", d.ancestorPath)
 	}
+	if err := d.checkOutsideCard(); err != nil {
+		root.Close()
+		return nil, err
+	}
 	if d.basePath == d.ancestorPath {
 		return root, nil
 	}
@@ -64,7 +94,7 @@ func (d destinationLocation) open() (*os.Root, error) {
 	// changes beneath it. An initially absent destination must not become a
 	// symlink to a different tree between planning and execution.
 	for _, component := range strings.Split(rel, string(filepath.Separator)) {
-		next, err := openDestinationChild(root, component)
+		next, err := openDestinationChild(root, component, d.sourceInfo)
 		root.Close()
 		if err != nil {
 			return nil, err
@@ -74,7 +104,7 @@ func (d destinationLocation) open() (*os.Root, error) {
 	return root, nil
 }
 
-func openDestinationChild(parent *os.Root, name string) (*os.Root, error) {
+func openDestinationChild(parent *os.Root, name string, sourceInfo os.FileInfo) (*os.Root, error) {
 	if err := parent.Mkdir(name, 0755); err != nil && !os.IsExist(err) {
 		return nil, fmt.Errorf("creating destination directory: %w", err)
 	}
@@ -84,6 +114,9 @@ func openDestinationChild(parent *os.Root, name string) (*os.Root, error) {
 	}
 	if !before.IsDir() {
 		return nil, fmt.Errorf("destination component is not a directory: %s", name)
+	}
+	if os.SameFile(sourceInfo, before) {
+		return nil, fmt.Errorf("destination component %s is the source card", name)
 	}
 	next, err := parent.OpenRoot(name)
 	if err != nil {
