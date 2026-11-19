@@ -27,8 +27,7 @@ var ErrAlreadyRunning = errors.New("cardbot daemon is already running")
 type detector interface {
 	Start() error
 	Stop()
-	Events() <-chan *detect.Card
-	Removals() <-chan string
+	Events() <-chan detect.Event
 	Eject(path string) error
 	Remove(path string)
 }
@@ -183,11 +182,12 @@ func (d *Daemon) Run() error {
 
 	for {
 		select {
-		case card := <-detector.Events():
-			d.handleCard(card)
-
-		case path := <-detector.Removals():
-			d.handleRemoval(path)
+		case event := <-detector.Events():
+			if event.Card != nil {
+				d.handleCard(event.Card)
+			} else {
+				d.handleRemoval(event.RemovedPath)
+			}
 
 		case <-d.sigChan:
 			fmt.Printf("[%s] Daemon shutting down\n", term.Ts())

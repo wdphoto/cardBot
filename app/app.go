@@ -197,11 +197,12 @@ func (a *App) Run(ctx context.Context) error {
 
 	for {
 		select {
-		case card := <-a.detector.Events():
-			a.handleCardEvent(card)
-
-		case path := <-a.detector.Removals():
-			a.handleRemoval(path)
+		case event := <-a.detector.Events():
+			if event.Card != nil {
+				a.handleCardEvent(event.Card)
+			} else {
+				a.handleRemoval(event.RemovedPath)
+			}
 
 		case input := <-a.inputChan:
 			a.handleInput(input)

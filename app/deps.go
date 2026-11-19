@@ -17,8 +17,7 @@ import (
 type cardDetector interface {
 	Start() error
 	Stop()
-	Events() <-chan *detect.Card
-	Removals() <-chan string
+	Events() <-chan detect.Event
 	Eject(path string) error
 	Remove(path string)
 }

@@ -19,22 +19,19 @@ type fakeDetector struct {
 	startErr error
 	started  chan struct{}
 	stopped  atomic.Bool
-	events   chan *detect.Card
-	removals chan string
+	events   chan detect.Event
 }
 
 func newFakeDetector() *fakeDetector {
 	return &fakeDetector{
-		started:  make(chan struct{}),
-		events:   make(chan *detect.Card),
-		removals: make(chan string),
+		started: make(chan struct{}),
+		events:  make(chan detect.Event),
 	}
 }
 
 func (f *fakeDetector) Start() error                { close(f.started); return f.startErr }
 func (f *fakeDetector) Stop()                       { f.stopped.Store(true) }
-func (f *fakeDetector) Events() <-chan *detect.Card { return f.events }
-func (f *fakeDetector) Removals() <-chan string     { return f.removals }
+func (f *fakeDetector) Events() <-chan detect.Event { return f.events }
 func (f *fakeDetector) Eject(string) error          { panic("daemon must not eject cards") }
 func (f *fakeDetector) Remove(string)               { panic("daemon must not remove cards") }
 
@@ -94,7 +91,7 @@ func startTestDaemon(t *testing.T, d *Daemon, fd *fakeDetector) func(os.Signal) 
 func sendCard(t *testing.T, fd *fakeDetector, path string) {
 	t.Helper()
 	select {
-	case fd.events <- &detect.Card{Path: path, Name: "synthetic card"}:
+	case fd.events <- detect.Event{Card: &detect.Card{Path: path, Name: "synthetic card"}}:
 	case <-time.After(3 * time.Second):
 		t.Fatal("card event was not received")
 	}
@@ -103,7 +100,7 @@ func sendCard(t *testing.T, fd *fakeDetector, path string) {
 func sendRemoval(t *testing.T, fd *fakeDetector, path string) {
 	t.Helper()
 	select {
-	case fd.removals <- path:
+	case fd.events <- detect.Event{RemovedPath: path}:
 	case <-time.After(3 * time.Second):
 		t.Fatal("removal event was not received")
 	}

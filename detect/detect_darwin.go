@@ -82,22 +82,18 @@ var (
 
 // Detector monitors for memory card insertion/removal using native macOS APIs.
 type Detector struct {
-	session  C.DASessionRef
-	runLoop  C.CFRunLoopRef
-	cards    map[string]*Card
-	events   chan *Card
-	removals chan string
-	mu       sync.RWMutex
-	started  bool
-	wg       sync.WaitGroup
+	session C.DASessionRef
+	runLoop C.CFRunLoopRef
+	stream  *cardStream
+	mu      sync.RWMutex
+	started bool
+	wg      sync.WaitGroup
 }
 
 // NewDetector creates a new card detector.
 func NewDetector() *Detector {
 	return &Detector{
-		cards:    make(map[string]*Card),
-		events:   make(chan *Card, 10),
-		removals: make(chan string, 10),
+		stream: newCardStream(),
 	}
 }
 
@@ -141,6 +137,11 @@ func (d *Detector) Start() error {
 		C.scheduleOnRunLoop(session, runLoop)
 
 		d.mu.Lock()
+		select {
+		case <-d.stream.stop:
+			d.stream = newCardStream()
+		default:
+		}
 		d.session = session
 		d.runLoop = runLoop
 		d.started = true
@@ -149,7 +150,8 @@ func (d *Detector) Start() error {
 		ready <- nil
 
 		// Scan volumes already mounted at startup; native callbacks handle future events.
-		go d.scanExistingVolumes()
+		d.wg.Add(1)
+		go func() { defer d.wg.Done(); d.scanExistingVolumes() }()
 		C.CFRunLoopRun()
 		C.DASessionUnscheduleFromRunLoop(session, runLoop, C.kCFRunLoopDefaultMode)
 		C.CFRelease(C.CFTypeRef(session))
@@ -170,6 +172,7 @@ func (d *Detector) Stop() {
 		return
 	}
 	d.started = false
+	close(d.stream.stop)
 	runLoop := d.runLoop
 	d.mu.Unlock()
 
@@ -183,11 +186,12 @@ func (d *Detector) Stop() {
 	detectorMu.Unlock()
 }
 
-// Events returns a channel for card insertion events.
-func (d *Detector) Events() <-chan *Card { return d.events }
-
-// Removals returns a channel for card removal events.
-func (d *Detector) Removals() <-chan string { return d.removals }
+// Events delivers both kinds of transition in observation order.
+func (d *Detector) Events() <-chan Event {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.stream.events
+}
 
 // Eject fully ejects the volume at the given path (unmount + release hardware).
 func (d *Detector) Eject(path string) error {
@@ -200,15 +204,19 @@ func (d *Detector) Eject(path string) error {
 
 // Remove removes a card from tracking (used after programmatic eject).
 func (d *Detector) Remove(path string) {
-	d.mu.Lock()
-	delete(d.cards, path)
-	d.mu.Unlock()
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	d.stream.forget(path)
 }
 
 // scanExistingVolumes performs a one-time scan of already-mounted volumes at startup.
 func (d *Detector) scanExistingVolumes() {
-	time.Sleep(200 * time.Millisecond)
-	d.scanVolumes()
+	select {
+	case <-d.stream.stop:
+		return
+	case <-time.After(200 * time.Millisecond):
+		d.scanVolumes()
+	}
 }
 
 // deferredScan waits for a volume to finish mounting, then scans /Volumes.
@@ -217,7 +225,11 @@ func (d *Detector) scanExistingVolumes() {
 // mount may take a moment after the hardware appears.
 func (d *Detector) deferredScan() {
 	for i := 0; i < 3; i++ {
-		time.Sleep(1 * time.Second)
+		select {
+		case <-d.stream.stop:
+			return
+		case <-time.After(time.Second):
+		}
 		if d.scanVolumes() {
 			return
 		}
@@ -238,26 +250,13 @@ func (d *Detector) scanVolumes() bool {
 		}
 		path := filepath.Join("/Volumes", vol.Name())
 
-		d.mu.RLock()
-		_, alreadyTracked := d.cards[path]
-		d.mu.RUnlock()
-
-		if alreadyTracked {
+		if d.stream.tracked(path) {
 			continue
 		}
 
 		if isMemoryCard(path) {
 			card := buildCard(path, vol.Name())
-			if card != nil {
-				d.mu.Lock()
-				// Double-check under write lock.
-				if _, exists := d.cards[path]; exists {
-					d.mu.Unlock()
-					continue
-				}
-				d.cards[path] = card
-				d.mu.Unlock()
-				d.events <- card
+			if card != nil && d.stream.observe(Event{Card: card}) {
 				found = true
 			}
 		}
@@ -279,7 +278,8 @@ func diskAppearedCallback(disk C.DADiskRef, context unsafe.Pointer) {
 	if cPath == nil {
 		// Disk appeared but volume isn't mounted yet (common after eject + re-insert).
 		// Scan /Volumes from a goroutine once the mount completes.
-		go d.deferredScan()
+		d.wg.Add(1)
+		go func() { defer d.wg.Done(); d.deferredScan() }()
 		return
 	}
 	path := C.GoString(cPath)
@@ -301,18 +301,7 @@ func diskAppearedCallback(disk C.DADiskRef, context unsafe.Pointer) {
 		return
 	}
 
-	d.mu.Lock()
-	if _, exists := d.cards[path]; exists {
-		d.mu.Unlock()
-		return
-	}
-	d.cards[path] = card
-	d.mu.Unlock()
-
-	select {
-	case d.events <- card:
-	default:
-	}
+	d.stream.observe(Event{Card: card})
 }
 
 //export diskDisappearedCallback
@@ -332,15 +321,5 @@ func diskDisappearedCallback(disk C.DADiskRef, context unsafe.Pointer) {
 	path := C.GoString(cPath)
 	C.free(unsafe.Pointer(cPath))
 
-	d.mu.Lock()
-	if _, exists := d.cards[path]; exists {
-		delete(d.cards, path)
-		d.mu.Unlock()
-		select {
-		case d.removals <- path:
-		default:
-		}
-	} else {
-		d.mu.Unlock()
-	}
+	d.stream.observe(Event{RemovedPath: path})
 }

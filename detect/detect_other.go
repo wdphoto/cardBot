@@ -8,17 +8,13 @@ import (
 
 // Detector monitors for memory card insertion/removal.
 type Detector struct {
-	cards    map[string]*Card
-	events   chan *Card
-	removals chan string
+	events chan Event
 }
 
 // NewDetector creates a new card detector.
 func NewDetector() *Detector {
 	return &Detector{
-		cards:    make(map[string]*Card),
-		events:   make(chan *Card, 10),
-		removals: make(chan string, 10),
+		events: make(chan Event),
 	}
 }
 
@@ -30,14 +26,9 @@ func (d *Detector) Start() error {
 // Stop halts card monitoring.
 func (d *Detector) Stop() {}
 
-// Events returns a channel for card insertion events.
-func (d *Detector) Events() <-chan *Card {
+// Events is inert on unsupported platforms.
+func (d *Detector) Events() <-chan Event {
 	return d.events
-}
-
-// Removals returns a channel for card removal events.
-func (d *Detector) Removals() <-chan string {
-	return d.removals
 }
 
 // Remove is a no-op on unsupported platforms.

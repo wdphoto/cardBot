@@ -19,14 +19,12 @@ type fakeDetector struct {
 	startErr error
 	started  atomic.Bool
 	stopped  atomic.Bool
-	events   chan *detect.Card
-	removals chan string
+	events   chan detect.Event
 }
 
 func newFakeDetector() *fakeDetector {
 	return &fakeDetector{
-		events:   make(chan *detect.Card, 10),
-		removals: make(chan string, 10),
+		events: make(chan detect.Event, 10),
 	}
 }
 
@@ -36,11 +34,8 @@ func (f *fakeDetector) Start() error {
 }
 
 func (f *fakeDetector) Stop() { f.stopped.Store(true) }
-func (f *fakeDetector) Events() <-chan *detect.Card {
+func (f *fakeDetector) Events() <-chan detect.Event {
 	return f.events
-}
-func (f *fakeDetector) Removals() <-chan string {
-	return f.removals
 }
 func (f *fakeDetector) Eject(path string) error { return nil }
 func (f *fakeDetector) Remove(path string)      {}

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"github.com/wdphoto/cardBot/fsutil"
 )
 
 // buildCard constructs a Card from a mount path and volume name.
@@ -29,7 +31,12 @@ func buildCardWithHardware(path, name string, quick func(string) *HardwareInfo, 
 	free := int64(stat.Bavail) * int64(stat.Bsize)
 	used := total - free
 
+	source, err := fsutil.IdentifySource(path)
+	if err != nil {
+		return nil
+	}
 	card := &Card{
+		Source:     source,
 		Path:       path,
 		Name:       name,
 		TotalBytes: total,
