@@ -18,7 +18,7 @@ func TestAgent_IsolatedLoginLifecycle(t *testing.T) {
 	loaded := false
 	var calls []call
 	// No launchctl process is executed: only plist I/O in this test's home.
-	run := func(name string, args ...string) error {
+	run := func(name string, args ...string) ([]byte, error) {
 		calls = append(calls, call{name, slices.Clone(args)})
 		if name != "launchctl" {
 			t.Fatalf("unexpected command %q", name)
@@ -32,7 +32,7 @@ func TestAgent_IsolatedLoginLifecycle(t *testing.T) {
 		default:
 			t.Fatalf("unexpected args %q", args)
 		}
-		return nil
+		return nil, nil
 	}
 	path, err := installWith(binary, home, 501, run)
 	if err != nil {
@@ -42,7 +42,7 @@ func TestAgent_IsolatedLoginLifecycle(t *testing.T) {
 		t.Fatalf("plist path = %q, want %q", path, plistPath)
 	}
 	wantCalls := [][]string{
-		{"bootout", "gui/501", plistPath},
+		{"bootout", "gui/501/" + label},
 		{"bootstrap", "gui/501", plistPath},
 		{"kickstart", "-k", "gui/501/" + label},
 	}
@@ -80,7 +80,7 @@ func TestAgent_IsolatedLoginLifecycle(t *testing.T) {
 			t.Fatalf("unexpected status command: %s %q", name, args)
 		}
 		if !loaded {
-			return nil, &exec.ExitError{}
+			return []byte("Could not find service \"" + label + "\" in domain for user gui: 501"), &exec.ExitError{}
 		}
 		return []byte("running"), nil
 	}
@@ -104,13 +104,52 @@ func TestAgent_IsolatedLoginLifecycle(t *testing.T) {
 	}
 }
 
+func TestUninstall_DistinguishesAbsentFromUnloadFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		printOut string
+		printErr error
+		keep     bool
+	}{
+		{"already absent", "Could not find service \"" + label + "\" in domain for user gui: 501", &exec.ExitError{}, false},
+		{"still loaded", "running", nil, true},
+		{"unknown status", "permission denied", os.ErrPermission, true},
+		{"domain error", "Could not find domain", &exec.ExitError{}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			path := plistPath(home)
+			if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte("existing"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := uninstallWith(home, 501, func(_ string, args ...string) ([]byte, error) {
+				switch args[0] {
+				case "bootout":
+					return nil, os.ErrPermission
+				case "print":
+					return []byte(tc.printOut), tc.printErr
+				}
+				t.Fatalf("unexpected launchctl args: %q", args)
+				return nil, nil
+			})
+			data, readErr := os.ReadFile(path)
+			if (err != nil) != tc.keep || (tc.keep && (readErr != nil || string(data) != "existing")) || (!tc.keep && !os.IsNotExist(readErr)) {
+				t.Fatalf("uninstall=%v plist=%q read=%v", err, data, readErr)
+			}
+		})
+	}
+}
+
 func TestInstallWith_KickstartError(t *testing.T) {
 	t.Parallel()
-	_, err := installWith("/synthetic/cardbot", t.TempDir(), 501, func(_ string, args ...string) error {
+	_, err := installWith("/synthetic/cardbot", t.TempDir(), 501, func(_ string, args ...string) ([]byte, error) {
 		if args[0] == "kickstart" {
-			return os.ErrPermission
+			return nil, os.ErrPermission
 		}
-		return nil
+		return nil, nil
 	})
 	if !errors.Is(err, os.ErrPermission) {
 		t.Fatalf("error = %v, want permission error", err)
@@ -123,9 +162,9 @@ func TestInstallWith_UnavailableDirectoryDoesNotLaunch(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home, "Library"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := installWith("/synthetic/cardbot", home, 501, func(string, ...string) error {
+	_, err := installWith("/synthetic/cardbot", home, 501, func(string, ...string) ([]byte, error) {
 		t.Fatal("must not launch when plist cannot be written")
-		return nil
+		return nil, nil
 	})
 	if err == nil {
 		t.Fatal("expected directory error")

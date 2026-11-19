@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -110,20 +111,43 @@ func runInstallDaemonCommand() int {
 		return 1
 	}
 
-	plist, err := launch.Install(exe)
+	plist, err := installDaemonWith(exe, launch.Install)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return 1
 	}
 
-	updateSavedDaemonPrefs(func(cfg *config.Config) {
-		cfg.Daemon.Enabled = true
-		cfg.Daemon.StartAtLogin = true
-	})
-
 	fmt.Printf("Installed LaunchAgent: %s\n", plist)
 	fmt.Println("cardBot daemon will start at login.")
 	return 0
+}
+
+func installDaemonWith(exe string, install func(string) (string, error)) (string, error) {
+	path, err := config.Path()
+	if err != nil {
+		return "", err
+	}
+	_, _, status, err := config.LoadWithStatus(path)
+	if err != nil {
+		return "", err
+	}
+	if err := validateDaemonConfig(path, status); err != nil {
+		return "", err
+	}
+	plist, err := install(exe)
+	if err != nil {
+		return "", err
+	}
+	// Read the settings again rather than overwriting a config that may have
+	// changed during login installation.
+	err = updateSavedDaemonPrefs(func(cfg *config.Config) {
+		cfg.Daemon.Enabled = true
+		cfg.Daemon.StartAtLogin = true
+	})
+	if err != nil {
+		return plist, fmt.Errorf("LaunchAgent installed at %s but login preferences were not saved: %w", plist, err)
+	}
+	return plist, nil
 }
 
 func runUninstallDaemonCommand() int {
@@ -133,9 +157,12 @@ func runUninstallDaemonCommand() int {
 		return 1
 	}
 
-	updateSavedDaemonPrefs(func(cfg *config.Config) {
+	if err := updateSavedDaemonPrefs(func(cfg *config.Config) {
 		cfg.Daemon.StartAtLogin = false
-	})
+	}); err != nil && !errors.Is(err, errNoDaemonPrefs) {
+		fmt.Fprintf(os.Stderr, "Error: LaunchAgent removed but login preferences were not saved: %v\n", err)
+		return 1
+	}
 
 	fmt.Printf("Uninstalled LaunchAgent: %s\n", plist)
 	fmt.Println("cardBot daemon will no longer start at login.")

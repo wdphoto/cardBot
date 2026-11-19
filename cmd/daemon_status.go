@@ -165,7 +165,6 @@ func collectDaemonStatusReportWith(opts daemonStatusOptions, version string,
 	st, err := checkLaunchAgent()
 	if err != nil {
 		report.LaunchAgent.Error = err.Error()
-		return report
 	}
 	report.LaunchAgent.PlistPath = st.PlistPath
 	report.LaunchAgent.Installed = st.Installed

@@ -133,6 +133,7 @@ func NewRootCommand(info BuildInfo) *cobra.Command {
 	flags.StringVar(&opts.TargetPathB64, "target-path-b64", "", "internal: base64-encoded target card path")
 	_ = flags.MarkHidden("target-path-b64")
 	root.MarkFlagsMutuallyExclusive("daemon", "setup")
+	root.MarkFlagsMutuallyExclusive("daemon", "dry-run")
 	root.MarkFlagsMutuallyExclusive("daemon", "reset")
 	bindRootFlags(v, flags)
 

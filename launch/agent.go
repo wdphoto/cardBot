@@ -35,7 +35,7 @@ func Install(binaryPath string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolving home directory: %w", err)
 	}
-	return installWith(binaryPath, home, os.Getuid(), runCommand)
+	return installWith(binaryPath, home, os.Getuid(), runCommandOutput)
 }
 
 // Uninstall unloads and removes the cardBot LaunchAgent plist.
@@ -48,7 +48,7 @@ func Uninstall() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolving home directory: %w", err)
 	}
-	return uninstallWith(home, os.Getuid(), runCommand)
+	return uninstallWith(home, os.Getuid(), runCommandOutput)
 }
 
 // CurrentStatus reports whether cardBot's LaunchAgent plist is installed
@@ -64,7 +64,7 @@ func CurrentStatus() (Status, error) {
 	return statusWith(home, os.Getuid(), runCommandOutput)
 }
 
-func installWith(binaryPath, home string, uid int, run commandRunner) (string, error) {
+func installWith(binaryPath, home string, uid int, run outputCommandRunner) (string, error) {
 	if strings.TrimSpace(binaryPath) == "" {
 		return "", fmt.Errorf("binary path is required")
 	}
@@ -77,26 +77,29 @@ func installWith(binaryPath, home string, uid int, run commandRunner) (string, e
 	if err := os.MkdirAll(filepath.Dir(plist), 0o755); err != nil {
 		return "", fmt.Errorf("creating LaunchAgents directory: %w", err)
 	}
+	domain := fmt.Sprintf("gui/%d", uid)
+	if err := unloadService(domain+"/"+label, run); err != nil {
+		return "", err
+	}
 	if err := os.WriteFile(plist, []byte(renderPlist(absBinary)), 0o644); err != nil {
 		return "", fmt.Errorf("writing plist: %w", err)
 	}
 
-	domain := fmt.Sprintf("gui/%d", uid)
-	_ = run("launchctl", "bootout", domain, plist) // ignore if not loaded
-	if err := run("launchctl", "bootstrap", domain, plist); err != nil {
-		return "", fmt.Errorf("loading launch agent: %w", err)
+	if _, err := run("launchctl", "bootstrap", domain, plist); err != nil {
+		return "", fmt.Errorf("plist saved at %s but could not load launch agent: %w", plist, err)
 	}
-	if err := run("launchctl", "kickstart", "-k", fmt.Sprintf("%s/%s", domain, label)); err != nil {
-		return "", fmt.Errorf("starting launch agent: %w", err)
+	if _, err := run("launchctl", "kickstart", "-k", fmt.Sprintf("%s/%s", domain, label)); err != nil {
+		return "", fmt.Errorf("launch agent loaded but kickstart failed: %w", err)
 	}
 
 	return plist, nil
 }
 
-func uninstallWith(home string, uid int, run commandRunner) (string, error) {
+func uninstallWith(home string, uid int, run outputCommandRunner) (string, error) {
 	plist := plistPath(home)
-	domain := fmt.Sprintf("gui/%d", uid)
-	_ = run("launchctl", "bootout", domain, plist) // ignore if not loaded
+	if err := unloadService(fmt.Sprintf("gui/%d/%s", uid, label), run); err != nil {
+		return "", err
+	}
 
 	if err := os.Remove(plist); err != nil && !os.IsNotExist(err) {
 		return "", fmt.Errorf("removing plist: %w", err)
@@ -107,30 +110,41 @@ func uninstallWith(home string, uid int, run commandRunner) (string, error) {
 func statusWith(home string, uid int, run outputCommandRunner) (Status, error) {
 	st := Status{PlistPath: plistPath(home)}
 
-	if _, err := os.Stat(st.PlistPath); err != nil {
-		if os.IsNotExist(err) {
-			return st, nil
-		}
+	if _, err := os.Stat(st.PlistPath); err == nil {
+		st.Installed = true
+	} else if !os.IsNotExist(err) {
 		return st, fmt.Errorf("checking plist: %w", err)
 	}
-	st.Installed = true
+	// An agent can remain loaded after its plist was removed.
+	var err error
+	st.Loaded, err = serviceLoaded(fmt.Sprintf("gui/%d/%s", uid, label), run)
+	return st, err
+}
 
-	if run == nil {
-		return st, nil
+func serviceLoaded(service string, run outputCommandRunner) (bool, error) {
+	out, err := run("launchctl", "print", service)
+	if err == nil {
+		return true, nil
 	}
+	var exitErr *exec.ExitError
+	// Unknown domains, denied requests and launchctl failures aren't evidence
+	// of absence. Only accept the explicit missing-service diagnostic.
+	if errors.As(err, &exitErr) && strings.Contains(string(out), "Could not find service \""+label+"\" in domain") {
+		return false, nil
+	}
+	return false, fmt.Errorf("checking launchctl service %s: %w", service, err)
+}
 
-	service := fmt.Sprintf("gui/%d/%s", uid, label)
-	_, err := run("launchctl", "print", service)
-	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			// launchctl returns non-zero when service is not loaded.
-			return st, nil
-		}
-		return st, fmt.Errorf("checking launchctl service: %w", err)
+func unloadService(service string, run outputCommandRunner) error {
+	_, err := run("launchctl", "bootout", service)
+	if err == nil {
+		return nil
 	}
-	st.Loaded = true
-	return st, nil
+	loaded, probeErr := serviceLoaded(service, run)
+	if probeErr == nil && !loaded {
+		return nil
+	} // idempotent uninstall
+	return fmt.Errorf("could not unload %s; plist retained: %w", service, errors.Join(err, probeErr))
 }
 
 func plistPath(home string) string {
@@ -173,7 +187,7 @@ func runCommandOutput(name string, args ...string) ([]byte, error) {
 		if msg == "" {
 			return nil, fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
 		}
-		return nil, fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, msg)
+		return out, fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, msg)
 	}
 	return out, nil
 }

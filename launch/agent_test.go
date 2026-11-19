@@ -42,9 +42,9 @@ func TestRenderPlist_IncludesBinaryAndDaemonArg(t *testing.T) {
 func TestInstallWith_WritesPlistAndLaunchesAgent(t *testing.T) {
 	home := t.TempDir()
 	var calls []call
-	run := func(name string, args ...string) error {
+	run := func(name string, args ...string) ([]byte, error) {
 		calls = append(calls, call{name: name, args: append([]string{}, args...)})
-		return nil
+		return nil, nil
 	}
 
 	plist, err := installWith("/usr/local/bin/cardbot", home, 501, run)
@@ -81,11 +81,11 @@ func TestInstallWith_WritesPlistAndLaunchesAgent(t *testing.T) {
 
 func TestInstallWith_BootstrapError(t *testing.T) {
 	home := t.TempDir()
-	run := func(name string, args ...string) error {
+	run := func(name string, args ...string) ([]byte, error) {
 		if len(args) > 0 && args[0] == "bootstrap" {
-			return os.ErrPermission
+			return nil, os.ErrPermission
 		}
-		return nil
+		return nil, nil
 	}
 
 	_, err := installWith("/usr/local/bin/cardbot", home, 501, run)
@@ -105,9 +105,9 @@ func TestUninstallWith_RemovesPlist(t *testing.T) {
 	}
 
 	var calls []call
-	run := func(name string, args ...string) error {
+	run := func(name string, args ...string) ([]byte, error) {
 		calls = append(calls, call{name: name, args: append([]string{}, args...)})
-		return nil
+		return nil, nil
 	}
 
 	gotPath, err := uninstallWith(home, 501, run)
@@ -128,7 +128,7 @@ func TestUninstallWith_RemovesPlist(t *testing.T) {
 	}
 }
 
-func TestStatusWith_NotInstalled(t *testing.T) {
+func TestStatusWith_LoadedWithoutPlist(t *testing.T) {
 	home := t.TempDir()
 	called := false
 	run := func(name string, args ...string) ([]byte, error) {
@@ -143,11 +143,11 @@ func TestStatusWith_NotInstalled(t *testing.T) {
 	if st.Installed {
 		t.Fatal("Installed = true, want false")
 	}
-	if st.Loaded {
-		t.Fatal("Loaded = true, want false")
+	if !st.Loaded {
+		t.Fatal("Loaded = false despite loaded job")
 	}
-	if called {
-		t.Fatal("launchctl should not be called when plist is not installed")
+	if !called {
+		t.Fatal("missing plist must not bypass launchctl status")
 	}
 }
 
@@ -188,7 +188,7 @@ func TestStatusWith_InstalledNotLoaded(t *testing.T) {
 	}
 
 	run := func(name string, args ...string) ([]byte, error) {
-		return nil, &exec.ExitError{}
+		return []byte("Could not find service \"" + label + "\" in domain for user gui: 501"), &exec.ExitError{}
 	}
 
 	st, err := statusWith(home, 501, run)

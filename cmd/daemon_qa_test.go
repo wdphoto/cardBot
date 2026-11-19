@@ -58,7 +58,7 @@ func TestDaemonConfig_IsolatedStartupValidation(t *testing.T) {
 }
 
 func TestDaemonCommand_RejectsInteractiveFlags(t *testing.T) {
-	for _, flag := range []string{"--setup", "--reset"} {
+	for _, flag := range []string{"--setup", "--reset", "--dry-run"} {
 		t.Run(flag, func(t *testing.T) {
 			t.Parallel()
 			root := NewRootCommand(BuildInfo{Version: "dev"})
@@ -87,6 +87,57 @@ func isolatedDaemonConfigPath(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func TestDaemonInstallPreflightsAndReportsPartialFailure(t *testing.T) {
+	path := isolatedDaemonConfigPath(t)
+	if err := os.WriteFile(path, []byte("{"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := installDaemonWith("/fixture/cardbot", func(string) (string, error) { t.Fatal("bootstrapped with malformed config"); return "", nil }); err == nil {
+		t.Fatal("expected preflight error")
+	}
+	if err := config.Save(config.Defaults(), path); err != nil {
+		t.Fatal(err)
+	}
+	_, err := installDaemonWith("/fixture/cardbot", func(string) (string, error) {
+		if err := os.Rename(path, path+".old"); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+		return "fixture.plist", nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "LaunchAgent installed at fixture.plist but login preferences were not saved") {
+		t.Fatalf("partial install: %v", err)
+	}
+}
+
+func TestDaemonInstall_ReportsPreferencesWriteError(t *testing.T) {
+	path := isolatedDaemonConfigPath(t)
+	if err := config.Save(config.Defaults(), path); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Dir(path)
+	if err := os.Chmod(dir, 0500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0700) })
+	// Skip only when the fixture cannot create a write error (e.g. root).
+	if f, err := os.CreateTemp(dir, "probe-*"); err == nil {
+		f.Close()
+		os.Remove(f.Name())
+		t.Skip("directory remains writable")
+	}
+	_, err := installDaemonWith("fixture", func(string) (string, error) { return "fixture.plist", nil })
+	if err == nil || !strings.Contains(err.Error(), "login preferences were not saved") {
+		t.Fatalf("install: %v", err)
+	}
+	cfg, _, err := config.Load(path)
+	if err != nil || cfg.Daemon.StartAtLogin {
+		t.Fatalf("prefs after failed save: %+v %v", cfg, err)
+	}
 }
 
 func TestDaemonPreferences_IsolatedSaveAndDebug(t *testing.T) {

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -125,7 +126,7 @@ func syncDaemonAutoStartFromConfig(cfg *config.Config) {
 		return
 	}
 
-	if st, err := launch.CurrentStatus(); err == nil && !st.Installed {
+	if st, err := launch.CurrentStatus(); err == nil && !st.Installed && !st.Loaded {
 		fmt.Printf("%s Start-at-login already disabled\n", term.DimTS(term.Ts()))
 		return
 	}
@@ -137,28 +138,27 @@ func syncDaemonAutoStartFromConfig(cfg *config.Config) {
 	fmt.Printf("%s Start-at-login disabled\n", term.DimTS(term.Ts()))
 }
 
-func updateSavedDaemonPrefs(mutator func(cfg *config.Config)) {
+var errNoDaemonPrefs = errors.New("no saved daemon preferences")
+
+func updateSavedDaemonPrefs(mutator func(cfg *config.Config)) error {
 	if mutator == nil {
-		return
+		return nil
 	}
 
 	cfgPath, err := config.Path()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not determine config path to update daemon preferences: %v\n", err)
-		return
+		return fmt.Errorf("locating daemon preferences: %w", err)
 	}
 
 	cfg, _, status, err := config.LoadWithStatus(cfgPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not load config to update daemon preferences: %v\n", err)
-		return
+		return fmt.Errorf("reading daemon preferences: %w", err)
 	}
-	if cfg == nil {
-		cfg = config.Defaults()
+	if status == config.LoadMissing {
+		return errNoDaemonPrefs
 	}
-	if status == config.LoadMalformed || status == config.LoadUnsupported {
-		fmt.Fprintf(os.Stderr, "Warning: refusing to overwrite existing %s config at %s\n", status, cfgPath)
-		return
+	if err := validateDaemonConfig(cfgPath, status); err != nil {
+		return err
 	}
 
 	mutator(cfg)
@@ -169,7 +169,5 @@ func updateSavedDaemonPrefs(mutator func(cfg *config.Config)) {
 		cfg.Daemon.TerminalApp = "Terminal"
 	}
 
-	if err := config.Save(cfg, cfgPath); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not save config daemon preferences: %v\n", err)
-	}
+	return config.Save(cfg, cfgPath)
 }
