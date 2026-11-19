@@ -52,7 +52,7 @@ func (t *throughputTracker) start(now time.Time, initialBytes int64) {
 }
 
 // sample records a progress observation and returns the updated smoothed BPS.
-// Execute samples at file boundaries; the UI separately throttles printing.
+// Execute samples at file boundaries and while a long file is streaming.
 func (t *throughputTracker) sample(now time.Time, bytesDone int64) float64 {
 	dt := now.Sub(t.lastTime).Seconds()
 	if dt <= 0 {
@@ -126,12 +126,26 @@ func formatThroughput(bps float64) string {
 	return fmt.Sprintf("%.1f MB/s", mbps)
 }
 
+// sampleReads throttles streaming updates on the copy goroutine. A stalled
+// syscall produces no invented progress; no ticker needs stopping on errors.
+func sampleReads(start time.Time, now func() time.Time, emit func(time.Time, int64)) func(int64) {
+	const interval = time.Second
+	next := start.Add(interval)
+	return func(n int64) {
+		at := now()
+		if !at.Before(next) {
+			next = at.Add(interval)
+			emit(at, n)
+		}
+	}
+}
+
 // FormatProgressLine renders the copy progress as a single-line string.
 // Example: "Copying  1,247/3,051  48.2 GB/96.4 GB  182 MB/s  ETA 4m12s"
 func FormatProgressLine(p Progress) string {
 	line := fmt.Sprintf("Copying  %s/%s  %s/%s  %s",
 		term.FormatCount(p.FilesDone), term.FormatCount(p.FilesTotal),
-		fsutil.FormatBytes(p.BytesDone),
+		fsutil.FormatBytes(p.BytesDone+p.BytesInFlight),
 		fsutil.FormatBytes(p.BytesTotal),
 		formatThroughput(p.SmoothedBPS),
 	)

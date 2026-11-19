@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"sync/atomic"
 	"testing"
 )
 
@@ -14,11 +13,9 @@ func TestTrackingReader_CountsBytes(t *testing.T) {
 
 	data := make([]byte, 1024*1024) // 1 MB
 	src := bytes.NewReader(data)
-	var counter atomic.Int64
 
 	r := &trackingReader{
-		r:       src,
-		counter: &counter,
+		r: src,
 	}
 
 	buf := make([]byte, 64*1024)
@@ -37,8 +34,8 @@ func TestTrackingReader_CountsBytes(t *testing.T) {
 	if total != int64(len(data)) {
 		t.Errorf("total read = %d, want %d", total, len(data))
 	}
-	if counter.Load() != int64(len(data)) {
-		t.Errorf("counter = %d, want %d", counter.Load(), len(data))
+	if r.bytesRead != int64(len(data)) {
+		t.Errorf("counter = %d, want %d", r.bytesRead, len(data))
 	}
 }
 
@@ -47,21 +44,19 @@ func TestTrackingReader_CancelMidRead(t *testing.T) {
 
 	data := make([]byte, 10*1024*1024) // 10 MB
 	src := bytes.NewReader(data)
-	var counter atomic.Int64
 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	r := &trackingReader{
 		r:          src,
 		ctx:        ctx,
-		counter:    &counter,
 		checkEvery: 1024 * 1024, // check every 1 MB
 	}
 
 	buf := make([]byte, 64*1024) // 64 KB reads
 
 	// Read 2 MB, then cancel.
-	for counter.Load() < 2*1024*1024 {
+	for r.bytesRead < 2*1024*1024 {
 		_, err := r.Read(buf)
 		if err != nil {
 			t.Fatalf("unexpected error before cancel: %v", err)
@@ -90,7 +85,7 @@ func TestTrackingReader_CancelMidRead(t *testing.T) {
 	}
 
 	// Should have stopped well before reading all 10 MB.
-	read := counter.Load()
+	read := r.bytesRead
 	if read >= int64(len(data)) {
 		t.Errorf("read all %d bytes despite cancel, should have stopped early", read)
 	}
@@ -102,11 +97,9 @@ func TestTrackingReader_NoCancelContext(t *testing.T) {
 	// Without a context, the reader should work normally (no cancel checks).
 	data := make([]byte, 512*1024) // 512 KB
 	src := bytes.NewReader(data)
-	var counter atomic.Int64
 
 	r := &trackingReader{
-		r:       src,
-		counter: &counter,
+		r: src,
 	}
 
 	buf := make([]byte, 64*1024)
@@ -120,8 +113,8 @@ func TestTrackingReader_NoCancelContext(t *testing.T) {
 		}
 	}
 
-	if counter.Load() != int64(len(data)) {
-		t.Errorf("counter = %d, want %d", counter.Load(), len(data))
+	if r.bytesRead != int64(len(data)) {
+		t.Errorf("counter = %d, want %d", r.bytesRead, len(data))
 	}
 }
 
@@ -130,20 +123,18 @@ func TestTrackingReader_SmallCheckEvery(t *testing.T) {
 
 	data := make([]byte, 256*1024) // 256 KB
 	src := bytes.NewReader(data)
-	var counter atomic.Int64
 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	r := &trackingReader{
 		r:          src,
 		ctx:        ctx,
-		counter:    &counter,
 		checkEvery: 32 * 1024, // check every 32 KB
 	}
 
 	// Read 64 KB then cancel.
 	buf := make([]byte, 16*1024)
-	for counter.Load() < 64*1024 {
+	for r.bytesRead < 64*1024 {
 		_, err := r.Read(buf)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)

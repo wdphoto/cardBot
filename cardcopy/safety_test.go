@@ -282,7 +282,7 @@ func TestCopyToDir_VerificationFailureNeverPublishes(t *testing.T) {
 					data[0] = '!'
 				}
 			}}
-			err = copyToDir(ctx, root, "IMG.JPG", src, int64(len(data)), make([]byte, 8192), new(atomic.Int64), true)
+			err = copyToDir(ctx, root, "IMG.JPG", src, int64(len(data)), make([]byte, 8192), nil, true)
 			if err == nil {
 				t.Fatal("expected verification failure")
 			}
@@ -321,7 +321,7 @@ func TestCopyToDir_PinsParentThroughCommit(t *testing.T) {
 			t.Skipf("symlinks unavailable: %v", err)
 		}
 	}}
-	if err := copyToDir(context.Background(), root, "IMG.JPG", src, 5, make([]byte, 8192), new(atomic.Int64), true); err != nil {
+	if err := copyToDir(context.Background(), root, "IMG.JPG", src, 5, make([]byte, 8192), nil, true); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(filepath.Join(moved, "IMG.JPG"))

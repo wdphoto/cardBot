@@ -3,7 +3,6 @@ package cardcopy
 import (
 	"context"
 	"io"
-	"sync/atomic"
 )
 
 // defaultCheckEvery is how often (in bytes) the tracking reader checks for
@@ -14,8 +13,8 @@ const defaultCheckEvery = 4 * 1024 * 1024
 
 // copyStream keeps byte tracking/cancellation on the reader while propagating
 // short writes and device errors from the destination. It does not publish files.
-func copyStream(ctx context.Context, dst io.Writer, src io.Reader, buf []byte, counter *atomic.Int64) (int64, error) {
-	tr := &trackingReader{r: src, ctx: ctx, counter: counter, checkEvery: defaultCheckEvery}
+func copyStream(ctx context.Context, dst io.Writer, src io.Reader, buf []byte, onRead func(int64)) (int64, error) {
+	tr := &trackingReader{r: src, ctx: ctx, onRead: onRead, checkEvery: defaultCheckEvery}
 	return io.CopyBuffer(dst, tr, buf)
 }
 
@@ -25,9 +24,10 @@ func copyStream(ctx context.Context, dst io.Writer, src io.Reader, buf []byte, c
 type trackingReader struct {
 	r          io.Reader
 	ctx        context.Context
-	counter    *atomic.Int64 // cumulative bytes read, updated on every Read
-	checkEvery int64         // bytes between cancellation checks
-	sinceCheck int64         // bytes read since last cancellation check
+	bytesRead  int64
+	onRead     func(int64) // synchronous, provisional bytes in this file
+	checkEvery int64       // bytes between cancellation checks
+	sinceCheck int64       // bytes read since last cancellation check
 }
 
 func (tr *trackingReader) Read(p []byte) (int, error) {
@@ -43,7 +43,10 @@ func (tr *trackingReader) Read(p []byte) (int, error) {
 
 	n, err := tr.r.Read(p)
 	if n > 0 {
-		tr.counter.Add(int64(n))
+		tr.bytesRead += int64(n)
+		if tr.onRead != nil {
+			tr.onRead(tr.bytesRead)
+		}
 		tr.sinceCheck += int64(n)
 	}
 	return n, err

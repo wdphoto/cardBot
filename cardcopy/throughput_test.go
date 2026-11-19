@@ -227,6 +227,11 @@ func TestFormatProgressLine(t *testing.T) {
 			want: "Copying  3/3,051  143.1 MB/89.8 GB  50 MB/s",
 		},
 		{
+			name: "in flight, not yet committed",
+			p:    Progress{FilesTotal: 1, BytesInFlight: 512, BytesTotal: 1024},
+			want: "Copying  0/1  512 B/1.0 KB  0.0 MB/s",
+		},
+		{
 			name: "complete",
 			p: Progress{
 				FilesDone:   100,

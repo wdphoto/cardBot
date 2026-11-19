@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"testing"
 )
@@ -28,15 +27,15 @@ func TestCopyStream_WriteFailures(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			var counter atomic.Int64
+			var bytesRead int64
 			writer := faultWriter(func(p []byte) (int, error) { return min(2, len(p)), tc.writeErr })
-			n, err := copyStream(context.Background(), writer, strings.NewReader("photo"), make([]byte, 32), &counter)
+			n, err := copyStream(context.Background(), writer, strings.NewReader("photo"), make([]byte, 32), func(n int64) { bytesRead = n })
 			if n != 2 || !errors.Is(err, tc.wantErr) {
 				t.Fatalf("copyStream = %d, %v; want 2, %v", n, err, tc.wantErr)
 			}
 			// Progress counts source reads, not committed/successful bytes.
-			if counter.Load() != 5 {
-				t.Fatalf("bytes read = %d, want 5", counter.Load())
+			if bytesRead != 5 {
+				t.Fatalf("bytes read = %d, want 5", bytesRead)
 			}
 		})
 	}
@@ -105,7 +104,7 @@ func TestCopyToDir_FaultCleanup(t *testing.T) {
 					}
 				}}
 			}
-			err = copyToDir(ctx, root, "IMG.NEF", reader, size, make([]byte, 8192), new(atomic.Int64), true)
+			err = copyToDir(ctx, root, "IMG.NEF", reader, size, make([]byte, 8192), nil, true)
 			if err == nil || (wantErr != nil && !errors.Is(err, wantErr)) {
 				t.Fatalf("copy error = %v, want %v", err, wantErr)
 			}

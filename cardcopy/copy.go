@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/wdphoto/cardBot/fsutil"
@@ -28,14 +27,15 @@ type ProgressFunc func(stats Progress)
 
 // Progress holds real-time copy stats for the callback.
 type Progress struct {
-	FilesDone   int
-	FilesTotal  int
-	BytesDone   int64
-	BytesTotal  int64
-	CurrentFile string  // relative destination path being copied
-	SourceFile  string  // relative source path (for dry-run rename preview)
-	SmoothedBPS float64 // EMA-smoothed bytes per second (-1 if not yet available)
-	ETASeconds  float64 // estimated seconds remaining (-1 if not yet available)
+	FilesDone     int
+	FilesTotal    int
+	BytesDone     int64 // Completed files, including accepted skips.
+	BytesInFlight int64 // Read from the current file; not yet published.
+	BytesTotal    int64
+	CurrentFile   string  // relative destination path being copied
+	SourceFile    string  // relative source path (for dry-run rename preview)
+	SmoothedBPS   float64 // EMA-smoothed bytes per second (-1 if not yet available)
+	ETASeconds    float64 // estimated seconds remaining (-1 if not yet available)
 }
 
 // Result holds the final outcome of a copy operation.
@@ -359,6 +359,10 @@ func assetKey(relPath string) string {
 // per file, not per card: cancellation leaves earlier completed files in place.
 // On a retry, planning can classify those destinations as skips.
 func Execute(ctx context.Context, plan *Plan, onProgress ProgressFunc) (*Result, error) {
+	return execute(ctx, plan, onProgress, time.Now)
+}
+
+func execute(ctx context.Context, plan *Plan, onProgress ProgressFunc, now func() time.Time) (*Result, error) {
 	if plan == nil {
 		return nil, fmt.Errorf("copy plan is required")
 	}
@@ -448,13 +452,17 @@ func Execute(ctx context.Context, plan *Plan, onProgress ProgressFunc) (*Result,
 	var bytesSkipped int64
 	start := time.Now()
 
-	// The stream counts bytes read within this file. The progress callback
-	// below samples completed files, not this counter.
-	var fileByteCounter atomic.Int64
-
-	// Throughput tracker for smoothed MB/s and ETA.
+	// The copy worker owns all callbacks. Only update bytesDone/filesDone
+	// after publication (or an accepted skip); stream samples are provisional.
 	tracker := newThroughputTracker()
-	tracker.start(start, 0)
+	tracker.start(now(), 0)
+	report := func(at time.Time, name string, inFlight int64) {
+		observed := bytesDone + inFlight
+		bps := tracker.sample(at, observed)
+		onProgress(Progress{FilesDone: filesDone, FilesTotal: len(plan.Files),
+			BytesDone: bytesDone, BytesInFlight: inFlight, BytesTotal: plan.TotalBytes,
+			CurrentFile: name, SmoothedBPS: bps, ETASeconds: tracker.eta(plan.TotalBytes - observed)})
+	}
 
 	for i := range plan.Files {
 		// Check for cancellation before each file.
@@ -485,25 +493,16 @@ func Execute(ctx context.Context, plan *Plan, onProgress ProgressFunc) (*Result,
 			continue
 		}
 
-		// Reset intra-file counter for this file.
-		fileByteCounter.Store(0)
-
+		var onRead func(int64)
 		if onProgress != nil {
-			now := time.Now()
-			bps := tracker.sample(now, bytesDone)
-			remaining := plan.TotalBytes - bytesDone
-			onProgress(Progress{
-				FilesDone:   filesDone,
-				FilesTotal:  len(plan.Files),
-				BytesDone:   bytesDone,
-				BytesTotal:  plan.TotalBytes,
-				CurrentFile: f.DestRelPath,
-				SmoothedBPS: bps,
-				ETASeconds:  tracker.eta(remaining),
+			at := now()
+			report(at, f.DestRelPath, 0)
+			onRead = sampleReads(at, now, func(at time.Time, n int64) {
+				report(at, f.DestRelPath, min(n, f.Size))
 			})
 		}
 
-		if err := copyFileCtx(ctx, sourceRoot, destRoot, *f, buf, &fileByteCounter, fullVerify); err != nil {
+		if err := copyFileCtx(ctx, sourceRoot, destRoot, *f, buf, onRead, fullVerify); err != nil {
 			return partialResult(filesDone, filesSkipped, bytesDone, bytesSkipped, start, opts.DestBase, verifyMethod),
 				fmt.Errorf("copying %s: %w", f.SourceRelPath, err)
 		}
@@ -515,18 +514,9 @@ func Execute(ctx context.Context, plan *Plan, onProgress ProgressFunc) (*Result,
 	if err := plan.source.Check(); err != nil {
 		return partialResult(filesDone, filesSkipped, bytesDone, bytesSkipped, start, opts.DestBase, verifyMethod), err
 	}
-	// Final progress
+	// Final progress is sent only after every file was accounted for.
 	if onProgress != nil {
-		now := time.Now()
-		bps := tracker.sample(now, bytesDone)
-		onProgress(Progress{
-			FilesDone:   filesDone,
-			FilesTotal:  len(plan.Files),
-			BytesDone:   bytesDone,
-			BytesTotal:  plan.TotalBytes,
-			SmoothedBPS: bps,
-			ETASeconds:  -1, // copy is done
-		})
+		report(now(), "", 0)
 	}
 
 	return &Result{
@@ -690,7 +680,7 @@ func classifyDestination(ctx context.Context, sourceRoot, root *os.Root, f Plann
 
 // copyFileCtx pins a contained parent directory for every operation on the
 // partial/final file, including verification, cleanup, and no-replace commit.
-func copyFileCtx(ctx context.Context, sourceRoot, root *os.Root, f PlannedFile, buf []byte, fileBytes *atomic.Int64, fullVerify bool) error {
+func copyFileCtx(ctx context.Context, sourceRoot, root *os.Root, f PlannedFile, buf []byte, onRead func(int64), fullVerify bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -711,12 +701,12 @@ func copyFileCtx(ctx context.Context, sourceRoot, root *os.Root, f PlannedFile, 
 		return err
 	}
 	defer src.Close()
-	return copyToDir(ctx, dir, filepath.Base(rel), src, f.Size, buf, fileBytes, fullVerify)
+	return copyToDir(ctx, dir, filepath.Base(rel), src, f.Size, buf, onRead, fullVerify)
 }
 
 // copyToDir publishes only a complete, synced, and (in full mode) verified file.
 // src is seekable so verification rereads the same open source after copying.
-func copyToDir(ctx context.Context, dir *os.Root, dst string, src io.ReadSeeker, srcSize int64, buf []byte, fileBytes *atomic.Int64, fullVerify bool) (err error) {
+func copyToDir(ctx context.Context, dir *os.Root, dst string, src io.ReadSeeker, srcSize int64, buf []byte, onRead func(int64), fullVerify bool) (err error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -733,7 +723,7 @@ func copyToDir(ctx context.Context, dir *os.Root, dst string, src io.ReadSeeker,
 		}
 	}()
 
-	n, err := copyStream(ctx, df, src, buf, fileBytes)
+	n, err := copyStream(ctx, df, src, buf, onRead)
 	if err != nil {
 		return err
 	}
