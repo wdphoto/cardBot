@@ -64,6 +64,19 @@ func promptDestinationReadlineIO(defaultPath string, in *bufio.Reader, out io.Wr
 	return line
 }
 
+func persistSetup(cfg *config.Config, path string, status config.LoadStatus, destination, naming func(string) string, syncLogin func(*config.Config), out io.Writer) error {
+	if path == "" || (status != config.LoadValid && status != config.LoadMissing) {
+		return fmt.Errorf("refusing setup: config at %q is not known to be valid or missing; repair it first", path)
+	}
+	if err := app.RunSetup(cfg, path, destination, naming); err != nil {
+		return fmt.Errorf("could not save config: %w", err)
+	}
+	syncLogin(cfg)
+	fprintSetupSummary(out, cfg)
+	fmt.Fprintln(out)
+	return nil
+}
+
 func fprintSetupSummary(w io.Writer, cfg *config.Config) {
 	if cfg == nil {
 		return

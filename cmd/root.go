@@ -275,13 +275,13 @@ func runInteractive(ctx context.Context, info BuildInfo, v *viper.Viper, flags *
 
 	var cfg *config.Config
 	var cfgWarnings []string
-	cfgStatus := config.LoadMissing
+	var cfgStatus config.LoadStatus
 
 	if cfgPath != "" {
 		cfg, cfgWarnings, cfgStatus, err = config.LoadWithStatus(cfgPath)
 		if err != nil {
-			if opts.Daemon {
-				fmt.Fprintf(os.Stderr, "Error: could not load daemon config: %v\n", err)
+			if opts.Daemon || opts.Setup {
+				fmt.Fprintf(os.Stderr, "Error: could not load saved config: %v\n", err)
 				return 1
 			}
 			fmt.Fprintf(os.Stderr, "Warning: %s — using defaults\n", term.FriendlyErr(err))
@@ -300,34 +300,24 @@ func runInteractive(ctx context.Context, info BuildInfo, v *viper.Viper, flags *
 		}
 	}
 
-	applyConfigOverrides(cfg, v, flags)
-
-	// --- First-run or --setup: prompt for destination, then continue into the app ---
-	needsSetup := opts.Setup
-	if cfgPath != "" {
-		if _, statErr := os.Stat(cfgPath); os.IsNotExist(statErr) {
-			needsSetup = true
-		}
-	}
-	if needsSetup {
-		if cfgStatus == config.LoadMalformed || cfgStatus == config.LoadUnsupported {
-			fmt.Fprintf(os.Stderr, "Error: refusing to overwrite existing %s config at %s; move or repair it first\n", cfgStatus, cfgPath)
-			return 1
-		}
+	// First-run and explicit setup operate on saved settings only. A failed
+	// read is not evidence that a config is missing.
+	if opts.Setup || (cfgPath != "" && cfgStatus == config.LoadMissing) {
 		setupReader := bufio.NewReader(os.Stdin)
 		setupPrompter := app.NewSetupPrompter(setupReader, os.Stdout)
 		promptDestinationFn := func(defaultPath string) string {
 			return promptDestinationWithIO(defaultPath, setupReader, os.Stdout)
 		}
-		if saveErr := app.RunSetup(cfg, cfgPath, promptDestinationFn, setupPrompter.PromptNamingMode); saveErr != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not save config: %s\n", term.FriendlyErr(saveErr))
-		} else if cfgPath != "" {
-			cfgStatus = config.LoadValid
+		if err := persistSetup(cfg, cfgPath, cfgStatus, promptDestinationFn, setupPrompter.PromptNamingMode, syncDaemonAutoStartFromConfig, os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			return 1
 		}
-		syncDaemonAutoStartFromConfig(cfg)
-		fprintSetupSummary(os.Stdout, cfg)
-		fmt.Println()
+		cfgStatus = config.LoadValid
 	}
+
+	// From here cfg is the effective configuration for this invocation. Never
+	// save it back wholesale just to record a version.
+	applyConfigOverrides(cfg, v, flags)
 
 	// --- Set up logger ---
 	var logger *cblog.Logger
@@ -424,23 +414,15 @@ func runInteractive(ctx context.Context, info BuildInfo, v *viper.Viper, flags *
 	fmt.Printf("\r%s %s ✓%s\n", term.DimTS(ts1), startupMessage(info.Version), clearEOL)
 
 	// What's new: show changelog on first run of a new version.
-	if cfg.Meta.LastSeenVersion == "" {
-		// First install — record version silently.
-		cfg.Meta.LastSeenVersion = info.Version
-		if cfgPath != "" && cfgStatus == config.LoadValid {
-			if saveErr := config.Save(cfg, cfgPath); saveErr != nil {
-				fmt.Fprintf(os.Stderr, "Warning: could not record current version: %v\n", saveErr)
+	if last := cfg.Meta.LastSeenVersion; last != info.Version {
+		if last != "" {
+			if bullets := parseChangelogSection(info.Changelog, info.Version); len(bullets) > 0 {
+				fprintChangelog(os.Stdout, bullets)
 			}
 		}
-	} else if cfg.Meta.LastSeenVersion != info.Version {
-		bullets := parseChangelogSection(info.Changelog, info.Version)
-		if len(bullets) > 0 {
-			fprintChangelog(os.Stdout, bullets)
-		}
-		cfg.Meta.LastSeenVersion = info.Version
-		if cfgPath != "" && cfgStatus == config.LoadValid {
-			if saveErr := config.Save(cfg, cfgPath); saveErr != nil {
-				fmt.Fprintf(os.Stderr, "Warning: could not record current version: %v\n", saveErr)
+		if cfgStatus == config.LoadValid {
+			if err := config.RecordVersion(cfgPath, info.Version); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not record current version: %v\n", err)
 			}
 		}
 	}

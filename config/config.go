@@ -208,13 +208,60 @@ func Save(cfg *Config, path string) error {
 		return fmt.Errorf("config is required")
 	}
 	cfg.Schema = schemaVersion
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return fmt.Errorf("creating config directory: %w", err)
-	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encoding config: %w", err)
+	}
+	return writeConfig(path, data)
+}
+
+// RecordVersion updates only meta.last_seen_version in an existing valid file.
+// Do not serialize the effective Config: it includes one-run overrides and
+// normalized defaults, and cannot represent unknown fields in the saved JSON.
+func RecordVersion(path, version string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var cfg *Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return err
+	}
+	if cfg == nil || (cfg.Schema != "" && cfg.Schema != schemaVersion) {
+		return fmt.Errorf("cannot record version in unsupported config at %s", path)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	meta := make(map[string]json.RawMessage)
+	if raw := fields["meta"]; raw != nil {
+		if err := json.Unmarshal(raw, &meta); err != nil {
+			return err
+		}
+	}
+	if meta == nil {
+		meta = make(map[string]json.RawMessage)
+	}
+	meta["last_seen_version"], err = json.Marshal(version)
+	if err != nil {
+		return err
+	}
+	fields["meta"], err = json.Marshal(meta)
+	if err != nil {
+		return err
+	}
+	data, err = json.MarshalIndent(fields, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeConfig(path, data)
+}
+
+func writeConfig(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("creating config directory: %w", err)
 	}
 	tmp, err := os.CreateTemp(dir, ".config.json.tmp-*")
 	if err != nil {
