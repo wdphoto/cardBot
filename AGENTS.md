@@ -72,13 +72,13 @@ Prefer `make test` before committing meaningful Go changes.
 - Avoid committing generated binaries, local configs, logs, caches, profiles, or secrets.
 - Do not vendor dependencies unless the user explicitly asks.
 - Keep install/update docs and scripts aligned with the canonical GitHub repo.
-- Keep `TODO.md` updated when adding, closing, or intentionally deferring review findings.
+- Keep the Tank backlog (`notebook/TODO.md` in the local `.tank/` core) updated when adding, closing, or intentionally deferring review findings. If the maintained core isn't available, report the follow-up rather than creating a second backlog.
 
 ## Security and local files
 
 - Never commit tokens, credentials, private keys, `.env*`, local config, logs, or generated binaries.
 - The root `cardbot` binary is generated and ignored.
-- `.pi/`, `agent/`, `.DS_Store`, and local logo/binary drafts are intentionally ignored.
+- `.tank/` is maintainer-local knowledge, not a published docs directory. Do not force-add it to Git. `.pi/`, legacy `agent/` material, `.DS_Store`, and local logo/binary drafts are intentionally ignored.
 - If a task touches install/update/release behavior, check for accidental disclosure of local paths, usernames, tokens, or private repo names.
 
 ## Agent behavior

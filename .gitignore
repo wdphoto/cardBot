@@ -80,7 +80,8 @@ config.local.json
 config.local.*
 *.local.json
 
-# Internal documentation (not for public repo)
+# Maintainer-local Tank core and legacy internal documentation
+/.tank/
 agent/
 
 # Logo drafts

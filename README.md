@@ -28,7 +28,9 @@ Recommended minimum: macOS 10.13 High Sierra (according to the clankers)
 
 ## cardBot's Codebase
 
-New to the source? [Follow one photo through cardBot](CODE_GUIDE.md), from the `p` key to its destination file and on-card receipt. The [November code review](CODE_REVIEW_2026-11-18.md) covers where those steps can go wrong.
+New to the source? Follow the `p` key from [the input handler](app/handlers.go) to [the photo filter](app/commands.go), [copy planner](cardcopy/copy.go), and [on-card receipt](dotfile/dotfile.go).
+
+The full walkthrough lives in the maintainer's local Tank at `.tank/codemap/ingest-walkthrough.md`. Tank isn't included in a fresh clone. To read the last versioned edition from this branch's history, run `git show 5a50cb4:CODE_GUIDE.md`.
 
 - **~7 MB** installed binary (single executable, no runtime dependencies)
 - **~8,500** lines of Go source across 16 packages
@@ -113,7 +115,7 @@ cardbot --setup
 | **0.10.0** | Safety hardening, release workflow, and performance QA | Unreleased |
 | **Later** | Copyright check and injection | Planned |
 
-See [`TODO.md`](TODO.md) for the current technical backlog and discussion items.
+The maintainer's technical backlog is in Tank at `.tank/notebook/TODO.md`, with supporting audits under `.tank/knowledge-base/reviews/`.
 
 Timestamp naming is deterministic across selective copies of the same card. The sequence suffix uses a minimum of four digits (`0001` … `9999`, `10000` …) and grows without rollover, so cards with 10,000+ assets work in all and selective modes. Existing four-digit mappings are preserved; padding does not change based on the card's total file count. cardBot never replaces an existing destination during ingest. Default `verify_mode=size` skips same-size files without proving content identity; use `advanced.verify_mode=full` for byte-level comparison. Full verification checks the temporary copy before publishing its final filename.
 
