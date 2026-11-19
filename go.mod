@@ -1,6 +1,6 @@
 module github.com/wdphoto/cardBot
 
-go 1.26.8
+go 1.26.11
 
 require (
 	github.com/briandowns/spinner v1.23.2
