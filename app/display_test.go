@@ -10,6 +10,7 @@ import (
 	"github.com/wdphoto/cardBot/analyze"
 	"github.com/wdphoto/cardBot/config"
 	"github.com/wdphoto/cardBot/detect"
+	"github.com/wdphoto/cardBot/fsutil"
 	"github.com/wdphoto/cardBot/term"
 )
 
@@ -51,11 +52,11 @@ func TestPrintCardInfo_HistoricalStatusAndGroupedCounts(t *testing.T) {
 
 func TestDisplayCard_CompletedScanWording(t *testing.T) {
 	a, _, card := newLifecycleApp(t, nil)
-	a.newAnalyzer = func(string) cardAnalyzer {
+	a.newAnalyzer = func(*fsutil.Source) cardAnalyzer {
 		return &fakeAnalyzer{result: &analyze.Result{FileCount: 11653, PhotoCount: 11653}}
 	}
 	out := captureStdout(t, func() {
-		a.displayCard(context.Background(), card.Path, term.DimTS("scan"))
+		a.displayCard(context.Background(), card, a.scanID, term.DimTS("scan"))
 	})
 	if !strings.Contains(out, "Scanned 11,653 files in ") || strings.Contains(out, "Scan completed in") {
 		t.Fatalf("expected one completed-scan line with grouped count:\n%s", out)

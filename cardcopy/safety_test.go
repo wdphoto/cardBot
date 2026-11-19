@@ -12,6 +12,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/wdphoto/cardBot/fsutil"
 )
 
 func verifyTestFiles(src, dst string, buf []byte) error {
@@ -425,6 +427,42 @@ func TestExecute_RevalidatesSizeSkips(t *testing.T) {
 				t.Fatalf("expected destination conflict, got %v", err)
 			}
 		})
+	}
+}
+
+func TestExecute_ReusedMountNeverReadsReplacement(t *testing.T) {
+	t.Parallel()
+	card := createTestCard(t, map[string]testFileSpec{"IMG.JPG": {data: []byte("first")}})
+	plan, err := PlanCopy(context.Background(), Options{CardPath: card, DestBase: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := filepath.Join(t.TempDir(), "original")
+	result, err := Execute(context.Background(), plan, func(p Progress) {
+		if p.FilesDone != 0 {
+			return
+		}
+		if err := os.Rename(card, original); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(card, "DCIM"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(card, "DCIM", "IMG.JPG"), []byte("other"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !errors.Is(err, fsutil.ErrSourceChanged) {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	// If the pinned original was published before the change was observed,
+	// account for it, but never publish bytes from the replacement.
+	got, readErr := os.ReadFile(plan.Files[0].DestPath)
+	if result.FilesCopied == 0 && os.IsNotExist(readErr) {
+		return
+	}
+	if readErr != nil || string(got) != "first" || result.FilesCopied != 1 {
+		t.Fatalf("destination=%q result=%+v err=%v", got, result, readErr)
 	}
 }
 

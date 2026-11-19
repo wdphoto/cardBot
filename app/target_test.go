@@ -11,6 +11,7 @@ import (
 
 	"github.com/wdphoto/cardBot/analyze"
 	"github.com/wdphoto/cardBot/config"
+	"github.com/wdphoto/cardBot/fsutil"
 )
 
 func TestTargetPath_SkipsScanningAndAnalyzesImmediately(t *testing.T) {
@@ -28,7 +29,8 @@ func TestTargetPath_SkipsScanningAndAnalyzesImmediately(t *testing.T) {
 		Cfg:         cfg,
 		TargetPath:  cardPath,
 		newDetector: func() cardDetector { return fd },
-		newAnalyzer: func(path string) cardAnalyzer {
+		newAnalyzer: func(source *fsutil.Source) cardAnalyzer {
+			path := source.Path()
 			analyzerCalled = true
 			if path != cardPath {
 				t.Fatalf("analyzer path = %q, want %q", path, cardPath)
@@ -91,7 +93,7 @@ func TestTargetPath_SetsCardNameFromBasename(t *testing.T) {
 		Cfg:         cfg,
 		TargetPath:  cardPath,
 		newDetector: func() cardDetector { return fd },
-		newAnalyzer: func(_ string) cardAnalyzer {
+		newAnalyzer: func(_ *fsutil.Source) cardAnalyzer {
 			return &fakeAnalyzer{result: &analyze.Result{FileCount: 1}}
 		},
 	})
@@ -131,7 +133,7 @@ func TestTargetPath_PopulatesFilesystemUsage(t *testing.T) {
 		Cfg:         cfg,
 		TargetPath:  cardPath,
 		newDetector: func() cardDetector { return fd },
-		newAnalyzer: func(_ string) cardAnalyzer {
+		newAnalyzer: func(_ *fsutil.Source) cardAnalyzer {
 			return &fakeAnalyzer{result: &analyze.Result{FileCount: 1}}
 		},
 	})
@@ -206,7 +208,7 @@ func TestTargetPath_InvalidPath_ShowsError(t *testing.T) {
 		Cfg:         cfg,
 		TargetPath:  missingPath,
 		newDetector: func() cardDetector { return fd },
-		newAnalyzer: func(_ string) cardAnalyzer {
+		newAnalyzer: func(_ *fsutil.Source) cardAnalyzer {
 			return &fakeAnalyzer{result: nil, err: os.ErrNotExist}
 		},
 	})
@@ -236,7 +238,7 @@ func TestTargetPath_MissingDCIM_RetriesBeforeFailing(t *testing.T) {
 		Cfg:         cfg,
 		TargetPath:  cardPath,
 		newDetector: func() cardDetector { return fd },
-		newAnalyzer: func(_ string) cardAnalyzer {
+		newAnalyzer: func(_ *fsutil.Source) cardAnalyzer {
 			attempt := attempts.Add(1)
 			if attempt < 3 {
 				return &fakeAnalyzer{result: nil, err: os.ErrNotExist}
@@ -275,7 +277,7 @@ func TestTargetPath_StillReceivesDetectorEvents(t *testing.T) {
 		Cfg:         cfg,
 		TargetPath:  cardPath,
 		newDetector: func() cardDetector { return fd },
-		newAnalyzer: func(_ string) cardAnalyzer {
+		newAnalyzer: func(_ *fsutil.Source) cardAnalyzer {
 			return &fakeAnalyzer{result: &analyze.Result{FileCount: 5}}
 		},
 	})

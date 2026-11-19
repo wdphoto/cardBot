@@ -2,11 +2,14 @@ package dotfile
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wdphoto/cardBot/fsutil"
 )
 
 func TestWriteRead_RoundTrip(t *testing.T) {
@@ -42,6 +45,29 @@ func TestWriteRead_RoundTrip(t *testing.T) {
 	}
 	if entry.Mode != "all" {
 		t.Errorf("Mode = %q, want all", entry.Mode)
+	}
+}
+
+func TestWrite_RefusesReusedCardPath(t *testing.T) {
+	t.Parallel()
+	path := t.TempDir()
+	source, err := fsutil.IdentifySource(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(path, filepath.Join(t.TempDir(), "original")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	err = Write(WriteOptions{CardPath: path, Source: source, Mode: "all"})
+	if !errors.Is(err, fsutil.ErrSourceChanged) {
+		t.Fatalf("write: %v", err)
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("replacement touched: %v %v", entries, err)
 	}
 }
 

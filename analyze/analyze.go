@@ -129,6 +129,7 @@ type ProgressFunc func(count int)
 // Analyzer scans a card's DCIM directory.
 type Analyzer struct {
 	cardPath   string
+	source     *fsutil.Source
 	workers    int
 	onProgress ProgressFunc
 }
@@ -137,6 +138,11 @@ type Analyzer struct {
 // Default is 1 worker (sequential). Use SetWorkers to enable parallel EXIF.
 func New(cardPath string) *Analyzer {
 	return &Analyzer{cardPath: cardPath, workers: 1}
+}
+
+// NewForSource binds analysis to the card acquired by the foreground session.
+func NewForSource(source *fsutil.Source) *Analyzer {
+	return &Analyzer{source: source, workers: 1}
 }
 
 // SetWorkers sets the number of parallel EXIF worker goroutines.
@@ -183,13 +189,25 @@ type exifResult struct {
 // An empty DCIM returns a non-nil Result. A failed inventory or metadata read
 // returns an error rather than offering selections from an incomplete scan.
 func (a *Analyzer) Analyze(ctx context.Context) (*Result, error) {
-	dcim := filepath.Join(a.cardPath, "DCIM")
-	files, ratingSidecars, err := collectMediaFiles(ctx, dcim)
+	source := a.source
+	if source == nil {
+		var err error
+		source, err = fsutil.IdentifySource(a.cardPath)
+		if err != nil {
+			return nil, err
+		}
+	}
+	root, err := source.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	files, ratingSidecars, err := collectMediaFiles(ctx, root)
 	if err != nil {
 		return nil, err
 	}
 
-	exifResults, err := a.extractEXIF(ctx, files)
+	exifResults, err := a.extractEXIF(ctx, root, files)
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +248,7 @@ func (a *Analyzer) Analyze(ctx context.Context) (*Result, error) {
 		}
 		if fileRatings[f.relPath] == 0 {
 			if sidecarPath := ratingSidecars[mediaStem(f.relPath)]; sidecarPath != "" {
-				rating, err := readXMPSidecarRating(sidecarPath)
+				rating, err := readXMPSidecarRating(root, sidecarPath)
 				if err != nil {
 					return nil, fmt.Errorf("reading rating sidecar %s: %w", sidecarPath, err)
 				}
@@ -265,6 +283,9 @@ func (a *Analyzer) Analyze(ctx context.Context) (*Result, error) {
 		}
 	}
 
+	if err := source.Check(); err != nil {
+		return nil, err
+	}
 	return &Result{
 		Groups:        buildGroups(groups),
 		FileDates:     fileDates,
@@ -282,10 +303,10 @@ func (a *Analyzer) Analyze(ctx context.Context) (*Result, error) {
 	}, nil
 }
 
-func collectMediaFiles(ctx context.Context, dcim string) ([]fileEntry, map[string]string, error) {
+func collectMediaFiles(ctx context.Context, root *os.Root) ([]fileEntry, map[string]string, error) {
 	var files []fileEntry
 	ratingSidecars := make(map[string]string)
-	err := fsutil.WalkDCIM(ctx, dcim, func(path, rel string, info fs.FileInfo) error {
+	err := fsutil.WalkDCIM(ctx, root, func(path, rel string, info fs.FileInfo) error {
 		ext := normalizeExt(filepath.Ext(rel))
 		if ratingSidecarExts[ext] {
 			ratingSidecars[mediaStem(rel)] = path
@@ -306,7 +327,7 @@ func collectMediaFiles(ctx context.Context, dcim string) ([]fileEntry, map[strin
 // Workers receive indices rather than appending to a shared slice. Each
 // writes its own slot; after Wait, the merge pairs results with the matching
 // walk entries regardless of the order in which the files finished decoding.
-func (a *Analyzer) extractEXIF(ctx context.Context, files []fileEntry) ([]exifResult, error) {
+func (a *Analyzer) extractEXIF(ctx context.Context, root *os.Root, files []fileEntry) ([]exifResult, error) {
 	exifFiles := make(chan int, 256)
 	exifResults := make([]exifResult, len(files))
 	var processed atomic.Int64
@@ -332,7 +353,7 @@ func (a *Analyzer) extractEXIF(ctx context.Context, files []fileEntry) ([]exifRe
 					continue
 				}
 				f := &files[idx]
-				exifResults[idx] = readExif(f.path, xmpBuf)
+				exifResults[idx] = readExif(root, f.path, xmpBuf)
 				if n := processed.Add(1); n%100 == 0 {
 					reportProgress(int(n))
 				}
@@ -369,8 +390,8 @@ const xmpBufSize = 256 * 1024
 // The file is read once: first xmpBufSize bytes are read into xmpBuf for XMP scanning,
 // then the file is seeked back to 0 for EXIF decoding.
 // Missing or unsupported EXIF is normal; filesystem I/O failures are not.
-func readExif(path string, xmpBuf []byte) exifResult {
-	f, err := os.Open(path)
+func readExif(root *os.Root, path string, xmpBuf []byte) exifResult {
+	f, err := root.Open(path)
 	if err != nil {
 		return exifResult{err: err}
 	}
@@ -443,8 +464,8 @@ func scanXMPRating(buf []byte) int {
 	return 0
 }
 
-func readXMPSidecarRating(path string) (int, error) {
-	f, err := os.Open(path)
+func readXMPSidecarRating(root *os.Root, path string) (int, error) {
+	f, err := root.Open(path)
 	if err != nil {
 		return 0, err
 	}

@@ -15,7 +15,12 @@ import (
 // printCardHeader renders the shared header lines used by both printCardInfo
 // and printInvalidCardInfo: Status, Path, Storage, Gear.
 func (a *App) printCardHeader(card *detect.Card, bodies, lenses []string) {
-	status := dotfile.Read(card.Path)
+	var status dotfile.Status
+	if card.Source != nil {
+		status = dotfile.ReadSource(card.Source)
+	} else {
+		status = dotfile.Read(card.Path)
+	}
 	fmt.Printf("  Status:   %s\n", dotfile.FormatStatus(status))
 	if status.Copied {
 		fmt.Println("            Historical record only; current files may not be backed up.")

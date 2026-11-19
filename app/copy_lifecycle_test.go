@@ -13,6 +13,7 @@ import (
 	"github.com/wdphoto/cardBot/cardcopy"
 	"github.com/wdphoto/cardBot/config"
 	"github.com/wdphoto/cardBot/detect"
+	"github.com/wdphoto/cardBot/fsutil"
 )
 
 // These tests exercise the copy lifecycle invariants:
@@ -56,7 +57,11 @@ func newLifecycleApp(t *testing.T, runCopy copyRunner) (*App, *fakeDetector, *de
 		runCopy:     runCopy,
 	})
 	a.detector = fd
-	card := &detect.Card{Path: cardPath, Name: "CARD"}
+	source, err := fsutil.IdentifySource(cardPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	card := &detect.Card{Path: cardPath, Name: "CARD", Source: source}
 	a.currentCard = card
 	a.phase = phaseReady
 	a.lastResult = &analyze.Result{FileCount: 1}
@@ -291,7 +296,7 @@ func testCopyRemovalQueue(t *testing.T, samePath bool) {
 		Cfg:         cfg,
 		DryRun:      true,
 		newDetector: func() cardDetector { return fd },
-		newAnalyzer: func(_ string) cardAnalyzer {
+		newAnalyzer: func(_ *fsutil.Source) cardAnalyzer {
 			return &fakeAnalyzer{result: &analyze.Result{FileCount: 1}}
 		},
 		runCopy: func(ctx context.Context, _ cardcopy.Options, _ cardcopy.ProgressFunc) (*cardcopy.Result, error) {
@@ -395,7 +400,11 @@ func TestCopyLifecycle_RemovalMarkerPreservedAfterWorkerCompletion(t *testing.T)
 		},
 	})
 	a.detector = fd
-	card := &detect.Card{Path: cardPath, Name: "CARD"}
+	source, err := fsutil.IdentifySource(cardPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	card := &detect.Card{Path: cardPath, Name: "CARD", Source: source}
 	a.currentCard = card
 	a.phase = phaseReady
 	a.lastResult = &analyze.Result{FileCount: 1}
@@ -508,7 +517,11 @@ func TestCopyLifecycle_CancelCalledOnNormalCompletion(t *testing.T) {
 		},
 	})
 	a.detector = fd
-	card := &detect.Card{Path: cardPath, Name: "CARD"}
+	source, err := fsutil.IdentifySource(cardPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	card := &detect.Card{Path: cardPath, Name: "CARD", Source: source}
 	a.currentCard = card
 	a.phase = phaseReady
 	a.lastResult = &analyze.Result{FileCount: 1}

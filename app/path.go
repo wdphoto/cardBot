@@ -9,7 +9,11 @@ func normalizeCardPath(path string) string {
 	if path == "" || strings.TrimSpace(path) == "" {
 		return ""
 	}
-	return filepath.Clean(path)
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return ""
+	}
+	return abs
 }
 
 func sameCardPath(a, b string) bool {

@@ -115,6 +115,7 @@ func (a *App) copyFiltered(ctx context.Context, cancel context.CancelFunc, card 
 		fileDateTimes = analyzeResult.FileDateTimes
 	}
 	opts := cardcopy.Options{
+		Source:        card.Source,
 		CardPath:      card.Path,
 		DestBase:      destBase,
 		BufferKB:      a.cfg.Advanced.BufferSizeKB,
@@ -207,6 +208,9 @@ func (a *App) handleCopyDone(out copyOutcome) {
 		copied = out.result.FilesCopied
 	}
 
+	if !removed && sameCard && out.err == nil && card.Source != nil {
+		out.err = card.Source.Check()
+	}
 	switch {
 	case removed:
 		if errors.Is(out.err, context.Canceled) {
@@ -281,6 +285,24 @@ func (a *App) handleCopySuccess(card *detect.Card, mode, destBase string, result
 		return
 	}
 
+	// Write through the acquired card identity. A changed source is not the
+	// same outcome as a receipt write failure on the correct read-only card.
+	dotErr := a.writeDotfile(dotfile.WriteOptions{
+		Source:             card.Source,
+		CardPath:           card.Path,
+		Destination:        destBase,
+		Mode:               mode,
+		FilesCopied:        result.FilesCopied + result.FilesSkipped,
+		BytesCopied:        result.BytesCopied + result.BytesSkipped,
+		Verified:           true,
+		VerificationMethod: result.VerifyMethod,
+		CardbotVersion:     a.version,
+	})
+	if errors.Is(dotErr, fsutil.ErrSourceChanged) {
+		a.Printf("%s %v; %d files copied, no completion receipt recorded.\n", a.TsPrefix(), dotErr, result.FilesCopied)
+		return
+	}
+
 	a.printMu.Lock()
 	fmt.Printf("\r%s Copy complete ✓                                          \n", term.DimTS(term.Ts()))
 	if result.FilesSkipped > 0 && result.FilesCopied == 0 {
@@ -311,19 +333,6 @@ func (a *App) handleCopySuccess(card *detect.Card, mode, destBase string, result
 		speed,
 		result.FilesSkipped)
 
-	// Media publication is finished. The on-card receipt counts files handled
-	// (new copies plus accepted skips); its method distinguishes a size match
-	// from a byte comparison. A receipt write error cannot undo those copies.
-	dotErr := a.writeDotfile(dotfile.WriteOptions{
-		CardPath:           card.Path,
-		Destination:        destBase,
-		Mode:               mode,
-		FilesCopied:        result.FilesCopied + result.FilesSkipped,
-		BytesCopied:        result.BytesCopied + result.BytesSkipped,
-		Verified:           true,
-		VerificationMethod: result.VerifyMethod,
-		CardbotVersion:     a.version,
-	})
 	if dotErr != nil {
 		fmt.Printf("%s Warning: ingest completed, but could not save .cardbot on card: %v\n", a.TsPrefix(), dotErr)
 		a.logf("Dotfile write failed: %v", dotErr)

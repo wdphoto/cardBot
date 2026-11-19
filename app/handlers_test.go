@@ -12,6 +12,7 @@ import (
 	"github.com/wdphoto/cardBot/cardcopy"
 	"github.com/wdphoto/cardBot/config"
 	"github.com/wdphoto/cardBot/detect"
+	"github.com/wdphoto/cardBot/fsutil"
 )
 
 func TestHandleCopyCmd_NotReady(t *testing.T) {
@@ -183,7 +184,7 @@ func TestHandleCardEvent_FirstCard_BecomesCurrentAndAnalyzes(t *testing.T) {
 	a := New(Config{
 		Cfg:         cfg,
 		newDetector: func() cardDetector { return fd },
-		newAnalyzer: func(_ string) cardAnalyzer {
+		newAnalyzer: func(_ *fsutil.Source) cardAnalyzer {
 			return &fakeAnalyzer{result: &analyze.Result{Bodies: []string{"NIKON Z 9"}}}
 		},
 	})
@@ -216,8 +217,9 @@ func TestHandleCardEvent_SecondCard_GetsQueued(t *testing.T) {
 	a.currentCard = &detect.Card{Path: "/card/first", Name: "FIRST"}
 	a.phase = phaseReady
 
+	secondPath := t.TempDir()
 	_ = captureStdout(t, func() {
-		a.handleCardEvent(&detect.Card{Path: "/card/second", Name: "SECOND"})
+		a.handleCardEvent(&detect.Card{Path: secondPath, Name: "SECOND"})
 	})
 
 	a.mu.Lock()
@@ -231,7 +233,7 @@ func TestHandleCardEvent_SecondCard_GetsQueued(t *testing.T) {
 	if qLen != 1 {
 		t.Fatalf("queue length = %d, want 1", qLen)
 	}
-	if qPath != "/card/second" {
+	if qPath != secondPath {
 		t.Fatalf("queue[0].Path = %q, want /card/second", qPath)
 	}
 }

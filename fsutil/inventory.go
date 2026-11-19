@@ -6,24 +6,27 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // WalkDCIM visits visible regular files. Analysis and planning share this
 // boundary: hidden entries and symlinks are deliberate exclusions; an entry
 // we couldn't enumerate or inspect makes the inventory incomplete.
-func WalkDCIM(ctx context.Context, dcim string, visit func(path, rel string, info fs.FileInfo) error) error {
-	return filepath.WalkDir(dcim, func(path string, d os.DirEntry, err error) error {
+func WalkDCIM(ctx context.Context, root *os.Root, visit func(path, rel string, info fs.FileInfo) error) error {
+	const dcim = "DCIM"
+	dir, err := root.Lstat(dcim)
+	if err != nil {
+		return err // preserve a missing DCIM for the app's target retry
+	}
+	if !dir.IsDir() {
+		return fmt.Errorf("DCIM is not a directory: %s", root.Name())
+	}
+	return fs.WalkDir(root.FS(), dcim, func(path string, d fs.DirEntry, err error) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		if err != nil {
-			if path == dcim && os.IsNotExist(err) {
-				return err // the app distinguishes a missing DCIM from a failed scan
-			}
 			return fmt.Errorf("incomplete DCIM inventory at %s: %w", path, err)
-		}
-		if path == dcim && !d.IsDir() {
-			return fmt.Errorf("DCIM is not a directory: %s", path)
 		}
 		if IsHidden(d.Name()) {
 			if d.IsDir() {
@@ -34,17 +37,14 @@ func WalkDCIM(ctx context.Context, dcim string, visit func(path, rel string, inf
 		if d.IsDir() || d.Type()&fs.ModeSymlink != 0 {
 			return nil
 		}
-		info, err := d.Info()
+		native := filepath.FromSlash(path)
+		info, err := root.Lstat(native)
 		if err != nil {
 			return fmt.Errorf("incomplete DCIM inventory at %s: %w", path, err)
 		}
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("not a regular source file: %s", path)
 		}
-		rel, err := filepath.Rel(dcim, path)
-		if err != nil {
-			return err
-		}
-		return visit(path, rel, info)
+		return visit(native, filepath.FromSlash(strings.TrimPrefix(path, dcim+"/")), info)
 	})
 }

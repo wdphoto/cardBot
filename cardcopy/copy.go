@@ -54,6 +54,7 @@ type Result struct {
 
 // Options configures the copy operation.
 type Options struct {
+	Source        *fsutil.Source                        // Optional identity from analysis; otherwise acquire at planning.
 	CardPath      string                                // Source card mount point
 	DestBase      string                                // Base destination directory (e.g. ~/Pictures/cardBot)
 	BufferKB      int                                   // Copy buffer size in KB (default 256)
@@ -68,6 +69,7 @@ type Options struct {
 // Plan describes the copy work to be performed after walking the card and
 // resolving destination paths. It is safe to inspect without writing files.
 type Plan struct {
+	source        *fsutil.Source
 	destination   destinationLocation
 	Options       Options
 	Files         []PlannedFile
@@ -144,7 +146,19 @@ func PlanCopy(ctx context.Context, opts Options) (*Plan, error) {
 
 	// Planning must not create the destination. When it exists, inspect it
 	// through a directory handle so descendant symlinks cannot escape it.
-	sourceInfo, err := os.Stat(cardPath)
+	source := opts.Source
+	if source == nil {
+		source, err = fsutil.IdentifySource(cardPath)
+		if err != nil {
+			return nil, err
+		}
+	}
+	sourceRoot, err := source.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer sourceRoot.Close()
+	sourceInfo, err := sourceRoot.Stat(".")
 	if err != nil {
 		return nil, fmt.Errorf("inspecting source card: %w", err)
 	}
@@ -155,8 +169,6 @@ func PlanCopy(ctx context.Context, opts Options) (*Plan, error) {
 	if destRoot != nil {
 		defer destRoot.Close()
 	}
-
-	dcim := filepath.Join(opts.CardPath, "DCIM")
 
 	// Build EXIF lookups from analyze result if available.
 	var exifDates map[string]string
@@ -169,7 +181,7 @@ func PlanCopy(ctx context.Context, opts Options) (*Plan, error) {
 	var totalBytes int64
 	var selectedFiles int
 
-	err = fsutil.WalkDCIM(ctx, dcim, func(path, rel string, info fs.FileInfo) error {
+	err = fsutil.WalkDCIM(ctx, sourceRoot, func(path, rel string, info fs.FileInfo) error {
 
 		// Record selective-copy eligibility, but retain every file in the list.
 		// Timestamp sequence assignment is based on the complete card so a file
@@ -193,7 +205,7 @@ func PlanCopy(ctx context.Context, opts Options) (*Plan, error) {
 		}
 
 		files = append(files, fileEntry{
-			srcPath:     path,
+			srcPath:     filepath.Join(sourceRoot.Name(), path),
 			relPath:     rel,
 			size:        info.Size(),
 			date:        date,
@@ -264,6 +276,7 @@ func PlanCopy(ctx context.Context, opts Options) (*Plan, error) {
 	}
 
 	plan := &Plan{
+		source:       source,
 		destination:  destination,
 		Options:      opts,
 		Files:        make([]PlannedFile, 0, len(files)),
@@ -271,6 +284,9 @@ func PlanCopy(ctx context.Context, opts Options) (*Plan, error) {
 		VerifyMethod: verifyMethod,
 	}
 	if selectedFiles == 0 {
+		if err := source.Check(); err != nil {
+			return nil, err
+		}
 		return plan, nil
 	}
 
@@ -314,7 +330,7 @@ func PlanCopy(ctx context.Context, opts Options) (*Plan, error) {
 			CaptureTime:   f.captureTime,
 			Action:        ActionCopy,
 		}
-		action, actionErr := classifyDestination(ctx, destRoot, planned, fullVerify, opts.BufferKB)
+		action, actionErr := classifyDestination(ctx, sourceRoot, destRoot, planned, fullVerify, opts.BufferKB)
 		if actionErr != nil {
 			return nil, actionErr
 		}
@@ -325,6 +341,9 @@ func PlanCopy(ctx context.Context, opts Options) (*Plan, error) {
 		plan.Files = append(plan.Files, planned)
 	}
 
+	if err := source.Check(); err != nil {
+		return nil, err
+	}
 	return plan, nil
 }
 
@@ -345,6 +364,14 @@ func Execute(ctx context.Context, plan *Plan, onProgress ProgressFunc) (*Result,
 	if err := ctx.Err(); err != nil {
 		return &Result{DestPath: opts.DestBase}, err
 	}
+	if plan.source == nil {
+		return nil, fmt.Errorf("source must be resolved by PlanCopy before execution")
+	}
+	sourceRoot, err := plan.source.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer sourceRoot.Close()
 	if len(plan.Files) == 0 {
 		return &Result{DestPath: opts.DestBase, Warnings: plan.Warnings, VerifyMethod: plan.VerifyMethod}, nil
 	}
@@ -373,6 +400,9 @@ func Execute(ctx context.Context, plan *Plan, onProgress ProgressFunc) (*Result,
 				filesSkipped++
 				bytesSkipped += f.Size
 			}
+		}
+		if err := plan.source.Check(); err != nil {
+			return nil, err
 		}
 		return &Result{
 			FilesCopied:  filesCopied,
@@ -432,11 +462,14 @@ func Execute(ctx context.Context, plan *Plan, onProgress ProgressFunc) (*Result,
 		default:
 		}
 
+		if err := plan.source.Check(); err != nil {
+			return partialResult(filesDone, filesSkipped, bytesDone, bytesSkipped, start, opts.DestBase, verifyMethod), err
+		}
 		f := &plan.Files[i]
 		if f.Action != ActionCopy {
 			// A plan is a snapshot, not proof that the destination is still
 			// present, contained, or identical when execution reaches it.
-			action, err := classifyDestination(ctx, destRoot, *f, fullVerify, opts.BufferKB)
+			action, err := classifyDestination(ctx, sourceRoot, destRoot, *f, fullVerify, opts.BufferKB)
 			if err == nil && action != f.Action {
 				err = fmt.Errorf("%w: %s changed after planning", ErrDestinationConflict, f.DestPath)
 			}
@@ -468,7 +501,7 @@ func Execute(ctx context.Context, plan *Plan, onProgress ProgressFunc) (*Result,
 			})
 		}
 
-		if err := copyFileCtx(ctx, destRoot, *f, buf, &fileByteCounter, fullVerify); err != nil {
+		if err := copyFileCtx(ctx, sourceRoot, destRoot, *f, buf, &fileByteCounter, fullVerify); err != nil {
 			return partialResult(filesDone, filesSkipped, bytesDone, bytesSkipped, start, opts.DestBase, verifyMethod),
 				fmt.Errorf("copying %s: %w", f.SourceRelPath, err)
 		}
@@ -477,6 +510,9 @@ func Execute(ctx context.Context, plan *Plan, onProgress ProgressFunc) (*Result,
 		filesDone++
 	}
 
+	if err := plan.source.Check(); err != nil {
+		return partialResult(filesDone, filesSkipped, bytesDone, bytesSkipped, start, opts.DestBase, verifyMethod), err
+	}
 	// Final progress
 	if onProgress != nil {
 		now := time.Now()
@@ -594,7 +630,7 @@ func destinationRelative(root *os.Root, path string) (string, error) {
 	return rel, nil
 }
 
-func classifyDestination(ctx context.Context, root *os.Root, f PlannedFile, fullVerify bool, bufferKB int) (PlannedAction, error) {
+func classifyDestination(ctx context.Context, sourceRoot, root *os.Root, f PlannedFile, fullVerify bool, bufferKB int) (PlannedAction, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -621,7 +657,7 @@ func classifyDestination(ctx context.Context, root *os.Root, f PlannedFile, full
 	// Do not credit a stale size match from the plan. Lstat also rejects a
 	// source that has become a symlink. Size mode never reads the payload.
 	if !fullVerify {
-		source, err := os.Lstat(f.SourcePath)
+		source, err := sourceRoot.Lstat(filepath.Join("DCIM", f.SourceRelPath))
 		if err != nil {
 			return "", fmt.Errorf("checking source for size skip %s: %w", f.SourceRelPath, err)
 		}
@@ -630,7 +666,7 @@ func classifyDestination(ctx context.Context, root *os.Root, f PlannedFile, full
 		}
 		return ActionSkipSizeMatch, nil
 	}
-	src, err := os.Open(f.SourcePath)
+	src, err := sourceRoot.Open(filepath.Join("DCIM", f.SourceRelPath))
 	if err != nil {
 		return "", fmt.Errorf("opening source: %w", err)
 	}
@@ -652,7 +688,7 @@ func classifyDestination(ctx context.Context, root *os.Root, f PlannedFile, full
 
 // copyFileCtx pins a contained parent directory for every operation on the
 // partial/final file, including verification, cleanup, and no-replace commit.
-func copyFileCtx(ctx context.Context, root *os.Root, f PlannedFile, buf []byte, fileBytes *atomic.Int64, fullVerify bool) error {
+func copyFileCtx(ctx context.Context, sourceRoot, root *os.Root, f PlannedFile, buf []byte, fileBytes *atomic.Int64, fullVerify bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -668,7 +704,7 @@ func copyFileCtx(ctx context.Context, root *os.Root, f PlannedFile, buf []byte, 
 		return err
 	}
 	defer dir.Close()
-	src, err := os.Open(f.SourcePath)
+	src, err := sourceRoot.Open(filepath.Join("DCIM", f.SourceRelPath))
 	if err != nil {
 		return err
 	}

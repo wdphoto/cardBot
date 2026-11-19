@@ -4,12 +4,14 @@
 package dotfile
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/wdphoto/cardBot/fsutil"
 )
 
 const (
@@ -59,11 +61,24 @@ type dotfileSchemaV2 struct {
 // Returns no recorded history (Copied=false) if the file doesn't exist or can't be parsed.
 // Automatically migrates v1 schemas to a single-entry v2 representation in memory.
 func Read(cardPath string) Status {
-	data, err := os.ReadFile(filepath.Join(cardPath, fileName))
+	source, err := fsutil.IdentifySource(cardPath)
 	if err != nil {
 		return Status{}
 	}
+	return ReadSource(source)
+}
 
+// ReadSource reads history only from the card that was acquired.
+func ReadSource(source *fsutil.Source) Status {
+	root, err := source.Open()
+	if err != nil {
+		return Status{}
+	}
+	defer root.Close()
+	data, err := root.ReadFile(fileName)
+	if err != nil {
+		return Status{}
+	}
 	return parseStatus(data)
 }
 
@@ -123,29 +138,9 @@ func parseStatus(data []byte) Status {
 	return Status{}
 }
 
-// readExistingSchema returns the schema string for an existing .cardbot file.
-// Missing or malformed files are treated as empty schema.
-func readExistingSchema(path string) (string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", nil
-		}
-		return "", err
-	}
-
-	var probe struct {
-		Schema string `json:"$schema"`
-	}
-	if err := json.Unmarshal(data, &probe); err != nil {
-		// Malformed JSON is treated as "new" status and may be replaced.
-		return "", nil
-	}
-	return probe.Schema, nil
-}
-
 // WriteOptions configures what gets written to the dotfile.
 type WriteOptions struct {
+	Source             *fsutil.Source // Optional identity of the card that was copied.
 	CardPath           string
 	Destination        string
 	Mode               string // "all", "photos", "videos", "selects"
@@ -160,16 +155,31 @@ type WriteOptions struct {
 // Uses atomic write (temp file + rename) to avoid corruption.
 // Preserves existing v2 entries for other modes.
 func Write(opts WriteOptions) error {
-	target := filepath.Join(opts.CardPath, fileName)
-	schema, err := readExistingSchema(target)
+	source := opts.Source
+	if source == nil {
+		var err error
+		source, err = fsutil.IdentifySource(opts.CardPath)
+		if err != nil {
+			return err
+		}
+	}
+	root, err := source.Open()
 	if err != nil {
 		return err
 	}
-	if schema != "" && schema != schemaV1 && schema != schemaV2 {
-		return fmt.Errorf("unknown .cardbot schema %q: refusing to overwrite", schema)
-	}
+	defer root.Close()
 
-	status := Read(opts.CardPath)
+	old, err := root.ReadFile(fileName)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	var probe struct {
+		Schema string `json:"$schema"`
+	}
+	if json.Unmarshal(old, &probe) == nil && probe.Schema != "" && probe.Schema != schemaV1 && probe.Schema != schemaV2 {
+		return fmt.Errorf("unknown .cardbot schema %q: refusing to overwrite", probe.Schema)
+	}
+	status := parseStatus(old)
 
 	now := time.Now()
 	newEntry := CopyEntry{
@@ -211,16 +221,16 @@ func Write(opts WriteOptions) error {
 
 	// An exclusive, unique temporary must never follow or truncate an existing
 	// .cardbot.tmp file/symlink. Clean up only the file created by this call.
-	tmp, err := os.CreateTemp(opts.CardPath, ".cardbot-*.tmp")
+	tmpName := ".cardbot-" + rand.Text() + ".tmp"
+	tmp, err := root.OpenFile(tmpName, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		return err
 	}
-	tmpPath := tmp.Name()
 	committed := false
 	defer func() {
 		_ = tmp.Close()
 		if !committed {
-			_ = os.Remove(tmpPath)
+			_ = root.Remove(tmpName)
 		}
 	}()
 	if err := tmp.Chmod(0644); err != nil {
@@ -235,7 +245,10 @@ func Write(opts WriteOptions) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmpPath, target); err != nil {
+	if err := source.Check(); err != nil {
+		return err
+	}
+	if err := root.Rename(tmpName, fileName); err != nil {
 		return err
 	}
 	committed = true

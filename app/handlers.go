@@ -13,6 +13,7 @@ import (
 	"github.com/wdphoto/cardBot/analyze"
 	"github.com/wdphoto/cardBot/config"
 	"github.com/wdphoto/cardBot/detect"
+	"github.com/wdphoto/cardBot/fsutil"
 	"github.com/wdphoto/cardBot/term"
 )
 
@@ -29,8 +30,8 @@ func (a *App) handleCardEvent(card *detect.Card) {
 	if card == nil {
 		return
 	}
-	card.Path = normalizeCardPath(card.Path)
-	if card.Path == "" {
+	path := normalizeCardPath(card.Path)
+	if path == "" {
 		return
 	}
 
@@ -38,7 +39,10 @@ func (a *App) handleCardEvent(card *detect.Card) {
 	defer a.mu.Unlock()
 
 	// Ignore if already being processed or queued.
-	if a.isTracked(card.Path) {
+	if a.isTracked(path) {
+		return
+	}
+	if !a.acquireCard(card, path) {
 		return
 	}
 
@@ -48,8 +52,6 @@ func (a *App) handleCardEvent(card *detect.Card) {
 	// new cards are queued; the event loop advances to them once the worker's
 	// outcome has been processed. This gate is independent of the phase value.
 	if a.currentCard == nil && a.copyID == 0 {
-		a.currentCard = card
-		a.setPhaseLocked(phaseAnalyzing)
 		fmt.Printf("%s Scanning ✓\n", a.TsPrefix())
 		hw := card.HW()
 		diskID := ""
@@ -59,13 +61,44 @@ func (a *App) handleCardEvent(card *detect.Card) {
 		fmt.Printf("%s %s\n", a.TsPrefix(), formatDetectedVolume(card.Path, diskID))
 		a.logf("Card detected: %s", card.Path)
 		scanTS := term.DimTS(term.Ts())
-		ctx, cancel := context.WithCancel(a.ctx)
-		a.scanCancel = cancel
-		go a.displayCard(ctx, card.Path, scanTS)
+		a.startScanLocked(card, scanTS)
 	} else {
 		a.cardQueue = append(a.cardQueue, card)
 		a.printQueueNotice(card)
 	}
+}
+
+// Acquire before queueing: a queued card must not become a different volume
+// merely because its mount path was reused while another card was active.
+func (a *App) acquireCard(card *detect.Card, path string) bool {
+	var err error
+	if card.Source == nil {
+		card.Source, err = fsutil.IdentifySource(path)
+	} else {
+		err = card.Source.Check()
+	}
+	if err != nil {
+		a.Printf("%s Cannot acquire card %s: %v\n", a.TsPrefix(), path, err)
+		return false
+	}
+	if card.Path != path {
+		card.Path = path
+	}
+	return true
+}
+
+func (a *App) startScanLocked(card *detect.Card, scanTS string) {
+	a.currentCard = card
+	a.setPhaseLocked(phaseAnalyzing)
+	ctx, cancel := context.WithCancel(a.ctx)
+	a.scanCancel = cancel
+	a.scanID++
+	id := a.scanID
+	a.scanWG.Add(1)
+	go func() {
+		defer a.scanWG.Done()
+		a.displayCard(ctx, card, id, scanTS)
+	}()
 }
 
 func (a *App) isTracked(path string) bool {
@@ -116,12 +149,12 @@ func (a *App) shouldRetryMissingDCIM(path string, attempt int) bool {
 	return sameCardPath(a.targetPath, path)
 }
 
-func (a *App) analyzeCard(ctx context.Context, path, scanTS string) (*analyze.Result, error) {
+func (a *App) analyzeCard(ctx context.Context, source *fsutil.Source, scanTS string) (*analyze.Result, error) {
 	for attempt := 1; ; attempt++ {
-		analyzer := a.newAnalyzer(path)
+		analyzer := a.newAnalyzer(source)
 		analyzer.SetWorkers(a.cfg.Advanced.ExifWorkers)
 		analyzer.OnProgress(func(count int) {
-			if count%100 == 0 {
+			if ctx.Err() == nil && count%100 == 0 {
 				fmt.Printf("\r%s Scanning %s files", scanTS, term.FormatCount(count))
 			}
 		})
@@ -130,11 +163,11 @@ func (a *App) analyzeCard(ctx context.Context, path, scanTS string) (*analyze.Re
 		if err == nil {
 			return result, nil
 		}
-		if !os.IsNotExist(err) || !a.shouldRetryMissingDCIM(path, attempt) {
+		if !os.IsNotExist(err) || !a.shouldRetryMissingDCIM(source.Path(), attempt) {
 			return nil, err
 		}
 
-		a.logf("Target path not ready yet (missing DCIM), retrying %d/%d: %s", attempt, targetNoDCIMRetryMaxAttempts, path)
+		a.logf("Target path not ready yet (missing DCIM), retrying %d/%d: %s", attempt, targetNoDCIMRetryMaxAttempts, source.Path())
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -146,86 +179,74 @@ func (a *App) analyzeCard(ctx context.Context, path, scanTS string) (*analyze.Re
 // displayCard bridges detection and selection: the detector knows the mount
 // path, but copy commands need the per-file dates and ratings from Analyze.
 // lastResult holds that index for the current card, not a list of copy jobs.
-func (a *App) displayCard(ctx context.Context, path, scanTS string) {
-	path = normalizeCardPath(path)
-
-	// Card may have been removed or replaced before this goroutine runs.
+func (a *App) displayCard(ctx context.Context, card *detect.Card, id uint64, scanTS string) {
 	if ctx.Err() != nil {
 		return
 	}
-	a.setPhase(phaseAnalyzing)
+	a.logf("Reading %s", card.Path)
+	start := time.Now()
+	result, err := a.analyzeCard(ctx, card.Source, scanTS)
+	if err == nil {
+		if wait := minScanVisualDuration - time.Since(start); wait > 0 {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(wait):
+			}
+		}
+		err = card.Source.Check()
+	}
+	a.applyScan(ctx, card, id, result, err, time.Since(start))
+}
 
-	a.logf("Reading %s", path)
-	scanStart := time.Now()
-	result, err := a.analyzeCard(ctx, path, scanTS)
-
-	// Cancelled — card was removed or replaced during analysis.
-	if ctx.Err() != nil {
+// Check ownership and change state under the same lock, including the failure
+// path that advances the queue. A pathname is not a scan generation.
+func (a *App) applyScan(ctx context.Context, card *detect.Card, id uint64, result *analyze.Result, err error, elapsed time.Duration) {
+	a.mu.Lock()
+	if ctx.Err() != nil || a.currentCard != card || id != a.scanID || a.phase == phaseShuttingDown {
+		a.mu.Unlock()
 		return
 	}
-
 	if err != nil {
 		if os.IsNotExist(err) {
-			a.mu.Lock()
-			if a.currentCard == nil || a.currentCard.Path != path {
-				a.mu.Unlock()
-				return
-			}
 			a.cardInvalid = true
 			a.setPhaseLocked(phaseReady)
-			card := a.currentCard
 			a.mu.Unlock()
 			fmt.Printf("\r%s Card is invalid (no DCIM found)\n", a.TsPrefix())
-			a.logf("Card invalid: no DCIM at %s", path)
+			a.logf("Card invalid: no DCIM at %s", card.Path)
 			a.printInvalidCardInfo(card)
 		} else {
-			fmt.Printf("\r%s Error scanning card: %s\n", a.TsPrefix(), term.FriendlyErr(err))
-			a.logf("Error analyzing card %s: %v", path, err)
-			a.finishCard()
+			a.Printf("\r%s Error scanning card: %s\n", a.TsPrefix(), term.FriendlyErr(err))
+			a.finishCardLocked()
+			a.mu.Unlock()
 		}
-		return
-	}
-
-	// Log any warnings from the scan.
-	if result != nil {
-		for _, w := range result.Warnings {
-			a.logf("Scan warning: %s: %s", path, w)
-		}
-	}
-
-	elapsed := time.Since(scanStart)
-	if wait := minScanVisualDuration - elapsed; wait > 0 {
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(wait):
-		}
-		elapsed = time.Since(scanStart)
-	}
-
-	total := 0
-	if result != nil {
-		total = result.FileCount
-	}
-	durStr := formatElapsed(elapsed)
-	fmt.Printf("\r%s Scanned %s files in %s ✓\n", a.TsPrefix(), term.FormatCount(total), durStr)
-	a.logf("Scan completed: %s — %d files in %s", path, total, durStr)
-	fmt.Println()
-
-	a.mu.Lock()
-	if a.currentCard == nil || a.currentCard.Path != path {
-		a.mu.Unlock()
 		return
 	}
 	a.lastResult = result
 	a.setPhaseLocked(phaseReady)
-	card := a.currentCard
 	a.mu.Unlock()
+
+	total := 0
+	if result != nil {
+		total = result.FileCount
+		for _, w := range result.Warnings {
+			a.logf("Scan warning: %s: %s", card.Path, w)
+		}
+	}
+	durStr := formatElapsed(elapsed)
+	fmt.Printf("\r%s Scanned %s files in %s ✓\n", a.TsPrefix(), term.FormatCount(total), durStr)
+	a.logf("Scan completed: %s — %d files in %s", card.Path, total, durStr)
+	fmt.Println()
 	a.printCardInfo(card, result)
 }
 
 func (a *App) finishCard() {
 	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.finishCardLocked()
+}
+
+func (a *App) finishCardLocked() {
 	if a.scanCancel != nil {
 		a.scanCancel()
 		a.scanCancel = nil
@@ -239,16 +260,10 @@ func (a *App) finishCard() {
 	if len(a.cardQueue) > 0 {
 		nextCard := a.cardQueue[0]
 		a.cardQueue = a.cardQueue[1:]
-		a.currentCard = nextCard
-		ctx, cancel := context.WithCancel(a.ctx)
-		a.scanCancel = cancel
-		a.mu.Unlock()
-		go a.displayCard(ctx, nextCard.Path, term.DimTS(term.Ts()))
+		a.startScanLocked(nextCard, term.DimTS(term.Ts()))
 		return
 	}
-	a.mu.Unlock()
-
-	a.StartScanning()
+	a.startScanningLocked()
 }
 
 // resumeScanningIfIdle starts the scanning spinner only if
@@ -299,24 +314,15 @@ func (a *App) handleRemoval(path string) {
 
 		hasQueue := len(a.cardQueue) > 0
 		a.setPhaseLocked(phaseAfterFinish(len(a.cardQueue)))
-		var nextCard *detect.Card
-		var nextCtx context.Context
-		if hasQueue {
-			nextCard = a.cardQueue[0]
-			a.cardQueue = a.cardQueue[1:]
-			a.currentCard = nextCard
-			a.setPhaseLocked(phaseAnalyzing)
-			var cancel context.CancelFunc
-			nextCtx, cancel = context.WithCancel(a.ctx)
-			a.scanCancel = cancel
-		}
-		a.mu.Unlock()
-
 		fmt.Printf("\n%s Card removed: %s\n", a.TsPrefix(), path)
 		a.logf("Card removed: %s", path)
 		if hasQueue {
-			go a.displayCard(nextCtx, nextCard.Path, term.DimTS(term.Ts()))
-		} else {
+			nextCard := a.cardQueue[0]
+			a.cardQueue = a.cardQueue[1:]
+			a.startScanLocked(nextCard, term.DimTS(term.Ts()))
+		}
+		a.mu.Unlock()
+		if !hasQueue {
 			go func() {
 				time.Sleep(removalDelay)
 				a.resumeScanningIfIdle()
@@ -522,20 +528,16 @@ func (a *App) launchTargetPath(path string) {
 		card = &detect.Card{Path: path, Name: filepath.Base(path), Brand: "Unknown"}
 	}
 
-	a.mu.Lock()
-	a.currentCard = card
-	a.setPhaseLocked(phaseAnalyzing)
-	a.mu.Unlock()
-
+	if !a.acquireCard(card, path) {
+		a.resumeScanningIfIdle()
+		return
+	}
 	scanTS := term.DimTS(term.Ts())
 	fmt.Printf("%s Scanning ✓\n", a.TsPrefix())
 	fmt.Printf("%s \"%s\" (target)\n", tsIndent, path)
 	a.logf("Target path: %s", path)
 
-	ctx, cancel := context.WithCancel(a.ctx)
 	a.mu.Lock()
-	a.scanCancel = cancel
+	a.startScanLocked(card, scanTS)
 	a.mu.Unlock()
-
-	go a.displayCard(ctx, path, scanTS)
 }

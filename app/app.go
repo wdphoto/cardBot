@@ -37,6 +37,8 @@ type App struct {
 	dryRun      bool
 	copiedModes map[string]bool    // modes completed this session
 	cardInvalid bool               // true when current card has no DCIM directory
+	scanID      uint64             // generation of the most recently acquired scan
+	scanWG      sync.WaitGroup     // all scan-owned directory handles close before shutdown
 	scanCancel  context.CancelFunc // cancels the current displayCard goroutine
 	copyCancel  context.CancelFunc // cancels the active copy worker
 	copyRemoved bool               // active copy was cancelled by card removal
@@ -215,6 +217,7 @@ func (a *App) Run(ctx context.Context) error {
 			}
 			a.mu.Unlock()
 			a.copyWG.Wait()
+			a.scanWG.Wait()
 			a.stopScanning()
 			fmt.Println("\nShutting down...")
 			a.logf("Shutting down")
