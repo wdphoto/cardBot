@@ -12,7 +12,7 @@ import (
 // buildCard constructs a Card from a mount path and volume name.
 // Returns nil if filesystem stats cannot be read.
 // Hardware info is fetched in a background goroutine to avoid blocking card detection;
-// it will be available by the time the user presses [i].
+// [i] can show the quick result while the fuller lookup is still running.
 func buildCard(path, name string) *Card {
 	return buildCardWithHardware(path, name, QuickHardwareInfo, GetHardwareInfo)
 }
@@ -53,7 +53,7 @@ func buildCardWithHardware(path, name string, quick func(string) *HardwareInfo, 
 
 // detectBrand identifies camera brand from DCIM subfolder naming patterns.
 // Supports Nikon, Canon, Sony, Fujifilm, Panasonic, and Olympus.
-// See docs/FOOTNOTES.md for confidence levels and verification status.
+// This is a display hint, not a test for whether a card can be ingested.
 func detectBrand(path string) string {
 	dcim := filepath.Join(path, "DCIM")
 	entries, err := os.ReadDir(dcim)

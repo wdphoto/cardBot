@@ -146,7 +146,8 @@ func (a *Analyzer) SetWorkers(n int) {
 	a.workers = n
 }
 
-// OnProgress sets a callback invoked during the walk with the running file count.
+// OnProgress sets a callback for EXIF processing. Intermediate counts are
+// decoded attempts; the final count includes media that needed no EXIF pass.
 func (a *Analyzer) OnProgress(fn ProgressFunc) {
 	a.onProgress = fn
 }
@@ -175,9 +176,11 @@ type exifResult struct {
 // Phase 2: Parallel EXIF extraction — N workers decode date, camera, rating.
 // Phase 3: Merge — combines walk data with EXIF results into grouped stats.
 //
-// The context enables clean cancellation if the card is removed mid-scan.
-// Returns an empty Result (not nil) if the card has no files.
-// Returns an error only if DCIM cannot be read at all.
+// The resulting maps are keyed relative to DCIM, not the mount path. The app
+// uses them for selection and passes capture dates to the planner for naming.
+// They are not the copy inventory: XMP can supply a rating without being a photo.
+// An empty DCIM returns a non-nil Result. A missing DCIM or a cancelled walk
+// returns an error; a scan can also return partial results with warnings.
 func (a *Analyzer) Analyze(ctx context.Context) (*Result, error) {
 	dcim := filepath.Join(a.cardPath, "DCIM")
 	if _, err := os.Stat(dcim); err != nil {
@@ -332,6 +335,9 @@ func collectMediaFiles(ctx context.Context, dcim string) ([]fileEntry, map[strin
 	return files, ratingSidecars, warnings, nil
 }
 
+// Workers receive indices rather than appending to a shared slice. Each
+// writes its own slot; after Wait, the merge pairs results with the matching
+// walk entries regardless of the order in which the files finished decoding.
 func (a *Analyzer) extractEXIF(ctx context.Context, files []fileEntry) ([]exifResult, error) {
 	exifFiles := make(chan int, 256)
 	exifResults := make([]exifResult, len(files))

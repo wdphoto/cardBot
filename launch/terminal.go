@@ -1,3 +1,5 @@
+// Package launch manages two macOS handoffs: the login agent starts the
+// daemon (agent.go), and a card arrival opens a foreground session here.
 package launch
 
 import (

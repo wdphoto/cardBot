@@ -1,3 +1,6 @@
+// Package update checks release metadata and installs release binaries.
+// CheckLatest only compares versions; replacing the executable is a separate
+// operation requested by the self-update command.
 package update
 
 import (
@@ -116,6 +119,9 @@ func SelfUpdateForPlatform(ctx context.Context, client *http.Client, apiBase, re
 		return "", fmt.Errorf("%w: %s", ErrChecksumMissing, assetName)
 	}
 
+	// Stage beside the executable so publication is a same-filesystem rename.
+	// Until the release checksum matches and the temporary is synced and
+	// closed, the installed executable is left alone.
 	tmp, err := os.CreateTemp(filepath.Dir(executablePath), ".cardbot-update-*")
 	if err != nil {
 		return "", fmt.Errorf("creating temp file: %w", err)

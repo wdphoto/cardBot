@@ -1,4 +1,5 @@
-// Package app contains the core cardBot application logic.
+// Package app runs the foreground session. Detector events and typed commands
+// meet here; analyze inspects the card and cardcopy copies the selected files.
 package app
 
 import (
@@ -46,7 +47,7 @@ type App struct {
 	spinner     *spinner.Spinner   // scanner spinner
 	version     string             // app version for display and dotfile
 	phase       appPhase           // explicit runtime phase
-	targetPath  string             // optional: skip scanning and target this path directly
+	targetPath  string             // optional: analyze this path without waiting for an arrival
 	lastTS      string             // last printed timestamp for indentation
 	tsMu        sync.Mutex         // protects lastTS without re-entering a.mu from print paths
 
@@ -63,7 +64,7 @@ type Config struct {
 	Logger     *cblog.Logger
 	DryRun     bool
 	Version    string
-	TargetPath string // optional: skip scanning and target this path directly
+	TargetPath string // analyze this path first; the detector still monitors removals
 
 	// Optional dependency overrides for tests.
 	newDetector  detectorFactory
@@ -136,7 +137,7 @@ func (a *App) TsPrefix() string {
 }
 
 // SetLastTS records a timestamp so that TsPrefix can deduplicate it.
-// Used by main.go to sync the bootup timestamp with the app.
+// The CLI uses it to carry the last startup timestamp into the session.
 func (a *App) SetLastTS(t string) {
 	a.tsMu.Lock()
 	defer a.tsMu.Unlock()
@@ -173,7 +174,10 @@ func (a *App) drainInput() {
 	}
 }
 
-// Run starts the main event loop. It blocks until the context is cancelled.
+// Run handles detector events and input until ctx is cancelled. displayCard
+// scans a card and sets its ready state under mu. A copy worker instead sends
+// an outcome to this loop: removal, cancellation and copy completion must be
+// handled together before advancing to the next card.
 func (a *App) Run(ctx context.Context) error {
 	a.ctx = ctx
 	a.detector = a.newDetector()

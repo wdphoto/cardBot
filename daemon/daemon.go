@@ -1,7 +1,7 @@
 // Package daemon provides a headless background mode that watches for
 // camera card insertions and invokes a callback (typically launching a
-// terminal window with cardbot). It reuses the detect package for native
-// card detection but has no TUI, spinner, or stdin handling.
+// terminal window with cardbot). The watcher uses the same detector as the
+// foreground app but never analyzes or copies media itself.
 package daemon
 
 import (
@@ -154,7 +154,8 @@ func (d *Daemon) Run() error {
 		defer lock.Close()
 	}
 
-	// Write PID file.
+	// The lock above enforces one watcher on supported platforms. The PID file
+	// is a separate aid for status and cleanup, not what grants ownership.
 	if d.pidPath != "" {
 		if err := os.MkdirAll(filepath.Dir(d.pidPath), 0700); err != nil {
 			fmt.Printf("[%s] Warning: could not create PID directory: %v\n", term.Ts(), err)

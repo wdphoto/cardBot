@@ -78,6 +78,9 @@ func (a *App) copyFiltered(ctx context.Context, cancel context.CancelFunc, card 
 	}
 	a.logf("Copy %s starting: %s → %s", mode, card.Path, destBase)
 
+	// Translate the menu choice into a predicate over paths relative to DCIM,
+	// the same keys Analyze used for dates and ratings. A nil filter means
+	// “all”; cardcopy expands a selection to include matching sidecars.
 	var filter func(relPath, ext string) bool
 	switch mode {
 	case "photos":
@@ -308,6 +311,9 @@ func (a *App) handleCopySuccess(card *detect.Card, mode, destBase string, result
 		speed,
 		result.FilesSkipped)
 
+	// Media publication is finished. The on-card receipt counts files handled
+	// (new copies plus accepted skips); its method distinguishes a size match
+	// from a byte comparison. A receipt write error cannot undo those copies.
 	dotErr := a.writeDotfile(dotfile.WriteOptions{
 		CardPath:           card.Path,
 		Destination:        destBase,

@@ -1,3 +1,5 @@
+// Package detect reports card arrivals and removals. App and daemon use the
+// same detector API; build constraints select how the host supplies events.
 package detect
 
 import "sync"

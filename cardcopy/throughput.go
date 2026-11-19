@@ -52,7 +52,7 @@ func (t *throughputTracker) start(now time.Time, initialBytes int64) {
 }
 
 // sample records a progress observation and returns the updated smoothed BPS.
-// Call on every progress tick (typically every 2 seconds).
+// Execute samples at file boundaries; the UI separately throttles printing.
 func (t *throughputTracker) sample(now time.Time, bytesDone int64) float64 {
 	dt := now.Sub(t.lastTime).Seconds()
 	if dt <= 0 {

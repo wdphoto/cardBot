@@ -1,3 +1,5 @@
+// Package cmd translates command-line arguments into a foreground card session,
+// a headless watcher, or a one-shot operation such as self-update.
 package cmd
 
 import (
@@ -255,6 +257,10 @@ func noArgs(name string) cobra.PositionalArgs {
 	}
 }
 
+// runInteractive is the startup path for the root command (including --daemon).
+// Config files are decoded by config, not Viper: Viper supplies flag/environment
+// overrides. The daemon requires saved settings instead of prompting; only
+// the foreground path builds an App and hands it a signal-cancellable context.
 func runInteractive(ctx context.Context, info BuildInfo, v *viper.Viper, flags *pflag.FlagSet, opts interactiveOptions) int {
 	if opts.Reset {
 		return runReset()

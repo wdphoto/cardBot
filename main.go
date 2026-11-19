@@ -1,3 +1,5 @@
+// Command cardbot ingests camera memory cards. The process entry point supplies
+// build information; follow cmd.NewRootCommand to see which mode actually runs.
 package main
 
 import (

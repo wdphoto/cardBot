@@ -1,3 +1,6 @@
+// Package config owns the saved JSON settings. Loading starts with Defaults
+// so older files need not contain every field; the command layer applies
+// runtime overrides after loading.
 package config
 
 import (
@@ -139,8 +142,8 @@ func LoadWithStatus(path string) (*Config, []string, LoadStatus, error) {
 		return cfg, nil, "", fmt.Errorf("reading config: %w", err)
 	}
 
-	// Parse schema field first to verify compatibility, then unmarshal into config.
-	// Use a single json.Unmarshal into a struct that embeds both to avoid parsing twice.
+	// Probe the schema before decoding settings. A caller may use defaults to
+	// display a warning, but a usable Config alone is not permission to save it.
 	var probe struct {
 		Schema string `json:"$schema"`
 	}

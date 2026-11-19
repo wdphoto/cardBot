@@ -1,4 +1,6 @@
-// Package dotfile reads and writes .cardbot files on memory cards.
+// Package dotfile reads and writes .cardbot, the ingest history kept on the
+// card itself. Each mode has a receipt, not a manifest of backed-up files;
+// displaying a receipt does not inspect the destination.
 package dotfile
 
 import (

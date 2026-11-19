@@ -1,4 +1,5 @@
-// Package cardcopy handles file copying from memory cards to the destination.
+// Package cardcopy turns a DCIM tree into a destination plan and executes it.
+// It writes destination files and reports counts; the caller owns card history.
 package cardcopy
 
 import (
@@ -113,9 +114,9 @@ var sidecarExts = map[string]bool{
 	"XMP": true, "WAV": true, "THM": true, "LRV": true, "AAE": true,
 }
 
-// Run executes the copy operation.
-// ctx may be cancelled to abort mid-copy; a partial *Result is always returned
-// alongside any error so the caller knows how many files completed.
+// Run is the entry point for both previews and real ingests: they use the
+// same PlanCopy, so filters and names are resolved by the same code. If a
+// transfer fails, the accompanying Result counts files completed before it stopped.
 func Run(ctx context.Context, opts Options, onProgress ProgressFunc) (*Result, error) {
 	plan, err := PlanCopy(ctx, opts)
 	if err != nil {
@@ -369,7 +370,9 @@ func assetKey(relPath string) string {
 	return strings.ToLower(stem)
 }
 
-// Execute performs a previously planned copy.
+// Execute previews the plan or applies it one file at a time. Publication is
+// per file, not per card: cancellation leaves earlier completed files in place.
+// On a retry, planning can classify those destinations as skips.
 func Execute(ctx context.Context, plan *Plan, onProgress ProgressFunc) (*Result, error) {
 	if plan == nil {
 		return nil, fmt.Errorf("copy plan is required")
@@ -449,7 +452,8 @@ func Execute(ctx context.Context, plan *Plan, onProgress ProgressFunc) (*Result,
 	var bytesSkipped int64
 	start := time.Now()
 
-	// Intra-file byte counter for live progress on large files.
+	// The stream counts bytes read within this file. The progress callback
+	// below samples completed files, not this counter.
 	var fileByteCounter atomic.Int64
 
 	// Throughput tracker for smoothed MB/s and ETA.
@@ -650,6 +654,8 @@ func classifyDestination(ctx context.Context, root *os.Root, f PlannedFile, full
 	if info.Size() != f.Size {
 		return "", fmt.Errorf("%w: %s exists with size %d; source size is %d", ErrDestinationConflict, f.DestPath, info.Size(), f.Size)
 	}
+	// Size mode compares against the length captured in the plan; it does not
+	// read either file here. Full mode must read both before accepting a skip.
 	if !fullVerify {
 		return ActionSkipSizeMatch, nil
 	}

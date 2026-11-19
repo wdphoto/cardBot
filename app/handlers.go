@@ -23,6 +23,8 @@ const (
 	targetNoDCIMRetryMaxAttempts = 8
 )
 
+// handleCardEvent starts analysis for the active card or queues the arrival.
+// Other cards can be detected while this card is being scanned or copied.
 func (a *App) handleCardEvent(card *detect.Card) {
 	if card == nil {
 		return
@@ -141,6 +143,9 @@ func (a *App) analyzeCard(ctx context.Context, path, scanTS string) (*analyze.Re
 	}
 }
 
+// displayCard bridges detection and selection: the detector knows the mount
+// path, but copy commands need the per-file dates and ratings from Analyze.
+// lastResult holds that index for the current card, not a list of copy jobs.
 func (a *App) displayCard(ctx context.Context, path, scanTS string) {
 	path = normalizeCardPath(path)
 

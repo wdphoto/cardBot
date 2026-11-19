@@ -19,12 +19,9 @@ func copyStream(ctx context.Context, dst io.Writer, src io.Reader, buf []byte, c
 	return io.CopyBuffer(dst, tr, buf)
 }
 
-// trackingReader wraps an io.Reader to provide:
-//  1. Live byte counting via an atomic counter (for intra-file progress)
-//  2. Periodic context cancellation checks (for mid-file abort)
-//
-// The counter is atomic so the copy goroutine can write it while the progress
-// callback reads it from the same goroutine (or a different one if needed).
+// trackingReader counts source bytes and checks for cancellation during a
+// large file, rather than waiting until the next file. Its counter measures
+// reads, not bytes verified or published at the destination.
 type trackingReader struct {
 	r          io.Reader
 	ctx        context.Context

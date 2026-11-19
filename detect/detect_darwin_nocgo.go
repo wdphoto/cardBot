@@ -12,7 +12,8 @@ import (
 )
 
 // Detector monitors for memory card insertion/removal using polling.
-// This is the fallback implementation when CGO is not available (no Xcode).
+// This is the ordinary macOS backend, including release builds. Only cgo
+// together with the cardbot_native tag selects DiskArbitration instead.
 type Detector struct {
 	cards    map[string]*Card
 	events   chan *Card
@@ -111,6 +112,8 @@ func (d *Detector) pollLoop() {
 	}
 }
 
+// scanVolumes compares the mount paths that have a DCIM directory now with
+// those from the previous poll. Detection triggers a scan, not a copy.
 func (d *Detector) scanVolumes() {
 	volumes, err := os.ReadDir("/Volumes")
 	if err != nil {

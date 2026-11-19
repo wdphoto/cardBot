@@ -1,6 +1,25 @@
 # cardBot TODO
 
-This is the concise project backlog. Rationale, evidence, and acceptance guidance from the latest audit live in [`CODE_REVIEW_2026-09-08.md`](CODE_REVIEW_2026-09-08.md). The earlier [`CODE_REVIEW_2026-07-09.md`](CODE_REVIEW_2026-07-09.md) remains the audit trail for decisions that have already landed.
+This is the project backlog. The latest [code review](CODE_REVIEW_2026-11-18.md) includes evidence and suggested regression checks. The [September](CODE_REVIEW_2026-09-08.md) and [July](CODE_REVIEW_2026-07-09.md) reports remain the audit trail for earlier work.
+
+## Open from the 2026-11-18 review
+
+These are findings, not implemented fixes. IDs match the [report](CODE_REVIEW_2026-11-18.md).
+
+- [ ] P1 · R1: Don't mark an ingest complete when part of the source inventory was unreadable; surface incomplete selection data.
+- [ ] P1 · R2: Check the live source length before counting a size-only skip.
+- [ ] P1 · R3: Tie analysis, source reads, removal and receipts to the same card identity, including relative targets and same-path replacements.
+- [ ] P1 · R4: Reject on-card destinations by directory identity as well as lexical containment.
+- [ ] P1 · R5: Refuse setup writes after a config read error; only sync login settings and report a save after successful persistence.
+- [ ] P2 · R6: Keep one-run overrides out of version-metadata saves.
+- [ ] P2 · R7: Keep differently dated same-stem primaries and selected sidecars paired across copy modes.
+- [ ] P2 · R8: Preserve observed arrival/removal order and delivery for slow consumers without blocking shutdown.
+- [ ] P2 · R9: Reject stale scan outcomes before they can alter a newer card session.
+- [ ] P2 · R10: Validate config before login installation and report actual preference/unload failures.
+- [ ] P2 · R11: Record an absolute install path and handle legacy relative records without guessing.
+- [ ] P2 · R12: Reject `--daemon --dry-run` or propagate dry-run to the launched foreground app.
+- [ ] P3 · R13: Show mid-file progress on long copies without counting bytes read as committed files.
+- [ ] QA: Run the default Go test suite on macOS CI as well as the opt-in native detector job.
 
 ## P1 — before the next serious release
 

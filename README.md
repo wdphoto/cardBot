@@ -28,6 +28,8 @@ Recommended minimum: macOS 10.13 High Sierra (according to the clankers)
 
 ## cardBot's Codebase
 
+New to the source? [Follow one photo through cardBot](CODE_GUIDE.md), from the `p` key to its destination file and on-card receipt. The [November code review](CODE_REVIEW_2026-11-18.md) covers where those steps can go wrong.
+
 - **~7 MB** installed binary (single executable, no runtime dependencies)
 - **~8,500** lines of Go source across 16 packages
 - **~8,100** lines of tests
