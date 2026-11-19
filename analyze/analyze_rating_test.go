@@ -4,8 +4,25 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestAnalyze_MissingRatingSidecarIsNotAnUnratedPhoto(t *testing.T) {
+	t.Parallel()
+	card := createTestCard(t, map[string]testFile{"IMG.JPG": {size: 3}, "IMG.XMP": {size: 4}})
+	a := New(card)
+	// The final progress sample separates EXIF decoding from the rating merge.
+	a.OnProgress(func(int) {
+		if err := os.Remove(filepath.Join(card, "DCIM", "IMG.XMP")); err != nil {
+			t.Fatal(err)
+		}
+	})
+	result, err := a.Analyze(context.Background())
+	if result != nil || err == nil || !strings.Contains(err.Error(), "IMG.XMP") {
+		t.Fatalf("result=%+v err=%v, want incomplete analysis", result, err)
+	}
+}
 
 func TestIsPhoto(t *testing.T) {
 	if !IsPhoto("NEF") {

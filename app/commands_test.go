@@ -141,6 +141,63 @@ func TestCopyFiltered_ReportsActualStatusWriteFailureWithoutProbe(t *testing.T) 
 	}
 }
 
+func TestIncompleteInventoryLeavesModeRetryable(t *testing.T) {
+	for _, dryRun := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dryRun=%v", dryRun), func(t *testing.T) {
+			// Simulate a directory becoming unavailable between reading its
+			// parent listing and enumerating it. Works even for privileged users.
+			var hide, restore string
+			var renameErr error
+			run := func(ctx context.Context, opts cardcopy.Options, progress cardcopy.ProgressFunc) (*cardcopy.Result, error) {
+				opts.Filter = func(rel, _ string) bool {
+					if rel == "A.JPG" && hide != "" {
+						renameErr = os.Rename(hide, restore)
+					}
+					return true
+				}
+				return cardcopy.Run(ctx, opts, progress)
+			}
+			a, _, card := newLifecycleApp(t, run)
+			a.dryRun = dryRun
+			dcim := filepath.Join(card.Path, "DCIM")
+			hide, restore = filepath.Join(dcim, "B"), filepath.Join(card.Path, "off-line")
+			if err := os.Mkdir(hide, 0700); err != nil {
+				t.Fatal(err)
+			}
+			for _, path := range []string{filepath.Join(dcim, "A.JPG"), filepath.Join(hide, "B.JPG")} {
+				if err := os.WriteFile(path, []byte("photo"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			writes := 0
+			a.writeDotfile = func(dotfile.WriteOptions) error { writes++; return nil }
+			copyAll := func() {
+				a.handleCopyCmd(card, "all")
+				out := waitOutcome(t, a)
+				a.copyWG.Wait()
+				a.handleCopyDone(out)
+			}
+			output := captureStdout(t, copyAll)
+			if renameErr != nil {
+				t.Fatal(renameErr)
+			}
+			if !strings.Contains(output, "incomplete DCIM inventory") || strings.Contains(output, "complete ✓") ||
+				writes != 0 || a.copiedModes["all"] || a.currentPhase() != phaseReady {
+				t.Fatalf("incomplete run: writes=%d modes=%v output=%s", writes, a.copiedModes, output)
+			}
+			if err := os.Rename(restore, hide); err != nil {
+				t.Fatal(err)
+			}
+			hide = ""
+			output = captureStdout(t, copyAll)
+			if !strings.Contains(output, "complete ✓") || (!dryRun && (writes != 1 || !a.copiedModes["all"])) ||
+				(dryRun && (writes != 0 || a.copiedModes["all"])) {
+				t.Fatalf("retry: writes=%d modes=%v output=%s", writes, a.copiedModes, output)
+			}
+		})
+	}
+}
+
 func TestIsPermissionErr(t *testing.T) {
 	t.Parallel()
 

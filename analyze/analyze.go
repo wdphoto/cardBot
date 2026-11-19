@@ -6,6 +6,7 @@ package analyze
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -81,7 +82,7 @@ type Result struct {
 	Bodies        []string             // Deduplicated camera bodies from EXIF (e.g. ["NIKON Z 9"])
 	Lenses        []string             // Deduplicated lens names from EXIF (e.g. ["NIKKOR Z 24-70mm f/2.8 S"])
 	Starred       int                  // Count of files with star rating > 0
-	Warnings      []string             // Non-fatal errors encountered during scan (permission, I/O)
+	Warnings      []string             // Advisory diagnostics only; inventory errors are fatal.
 }
 
 // videoExts lists extensions classified as video.
@@ -167,7 +168,7 @@ type exifResult struct {
 	body   string
 	lens   string
 	rating int
-	ok     bool
+	err    error
 }
 
 // Analyze walks the DCIM tree and returns content stats grouped by date.
@@ -179,15 +180,11 @@ type exifResult struct {
 // The resulting maps are keyed relative to DCIM, not the mount path. The app
 // uses them for selection and passes capture dates to the planner for naming.
 // They are not the copy inventory: XMP can supply a rating without being a photo.
-// An empty DCIM returns a non-nil Result. A missing DCIM or a cancelled walk
-// returns an error; a scan can also return partial results with warnings.
+// An empty DCIM returns a non-nil Result. A failed inventory or metadata read
+// returns an error rather than offering selections from an incomplete scan.
 func (a *Analyzer) Analyze(ctx context.Context) (*Result, error) {
 	dcim := filepath.Join(a.cardPath, "DCIM")
-	if _, err := os.Stat(dcim); err != nil {
-		return nil, err
-	}
-
-	files, ratingSidecars, warnings, err := collectMediaFiles(ctx, dcim)
+	files, ratingSidecars, err := collectMediaFiles(ctx, dcim)
 	if err != nil {
 		return nil, err
 	}
@@ -214,27 +211,30 @@ func (a *Analyzer) Analyze(ctx context.Context) (*Result, error) {
 		captureTime := f.mtime
 		date := captureTime.Format("2006-01-02")
 
-		if supportedExif[f.ext] {
-			r := &exifResults[i]
-			if r.ok {
-				if !r.date.IsZero() {
-					captureTime = r.date
-					date = r.date.Format("2006-01-02")
-				}
-				if r.body != "" {
-					bodySet[r.body] = true
-				}
-				if r.lens != "" {
-					lensSet[r.lens] = true
-				}
-				if r.rating > 0 {
-					fileRatings[f.relPath] = r.rating
-				}
-			}
+		r := &exifResults[i]
+		if r.err != nil {
+			return nil, fmt.Errorf("reading metadata for %s: %w", f.relPath, r.err)
+		}
+		if !r.date.IsZero() {
+			captureTime = r.date
+			date = r.date.Format("2006-01-02")
+		}
+		if r.body != "" {
+			bodySet[r.body] = true
+		}
+		if r.lens != "" {
+			lensSet[r.lens] = true
+		}
+		if r.rating > 0 {
+			fileRatings[f.relPath] = r.rating
 		}
 		if fileRatings[f.relPath] == 0 {
 			if sidecarPath := ratingSidecars[mediaStem(f.relPath)]; sidecarPath != "" {
-				if rating := readXMPSidecarRating(sidecarPath); rating > 0 {
+				rating, err := readXMPSidecarRating(sidecarPath)
+				if err != nil {
+					return nil, fmt.Errorf("reading rating sidecar %s: %w", sidecarPath, err)
+				}
+				if rating > 0 {
 					fileRatings[f.relPath] = rating
 				}
 			}
@@ -279,60 +279,28 @@ func (a *Analyzer) Analyze(ctx context.Context) (*Result, error) {
 		Bodies:        sortedKeys(bodySet),
 		Lenses:        sortedKeys(lensSet),
 		Starred:       starred,
-		Warnings:      warnings,
 	}, nil
 }
 
-func collectMediaFiles(ctx context.Context, dcim string) ([]fileEntry, map[string]string, []string, error) {
+func collectMediaFiles(ctx context.Context, dcim string) ([]fileEntry, map[string]string, error) {
 	var files []fileEntry
-	var warnings []string
 	ratingSidecars := make(map[string]string)
-	err := filepath.WalkDir(dcim, func(path string, d os.DirEntry, err error) error {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		if err != nil {
-			if !os.IsNotExist(err) {
-				rel, _ := filepath.Rel(dcim, path)
-				warnings = append(warnings, fmt.Sprintf("%s: %v", rel, err))
-			}
-			return nil
-		}
-		if d.IsDir() {
-			if fsutil.IsHidden(d.Name()) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if fsutil.IsHidden(d.Name()) || d.Type()&fs.ModeSymlink != 0 {
-			return nil
-		}
-		info, err := d.Info()
-		if err != nil {
-			return nil
-		}
-		ext := normalizeExt(filepath.Ext(d.Name()))
+	err := fsutil.WalkDCIM(ctx, dcim, func(path, rel string, info fs.FileInfo) error {
+		ext := normalizeExt(filepath.Ext(rel))
 		if ratingSidecarExts[ext] {
-			rel, _ := filepath.Rel(dcim, path)
 			ratingSidecars[mediaStem(rel)] = path
 			return nil
 		}
 		if ext == "" || (!photoExts[ext] && !videoExts[ext]) {
 			return nil
 		}
-		rel, _ := filepath.Rel(dcim, path)
 		files = append(files, fileEntry{path: path, relPath: rel, size: info.Size(), ext: ext, mtime: info.ModTime()})
 		return nil
 	})
 	if err != nil {
-		if ctx.Err() != nil {
-			return nil, nil, warnings, ctx.Err()
-		}
-		return nil, nil, warnings, err
+		return nil, nil, err
 	}
-	return files, ratingSidecars, warnings, nil
+	return files, ratingSidecars, nil
 }
 
 // Workers receive indices rather than appending to a shared slice. Each
@@ -364,8 +332,7 @@ func (a *Analyzer) extractEXIF(ctx context.Context, files []fileEntry) ([]exifRe
 					continue
 				}
 				f := &files[idx]
-				date, body, lens, rating, ok := readExif(f.path, xmpBuf)
-				exifResults[idx] = exifResult{date: date, body: body, lens: lens, rating: rating, ok: ok}
+				exifResults[idx] = readExif(f.path, xmpBuf)
 				if n := processed.Add(1); n%100 == 0 {
 					reportProgress(int(n))
 				}
@@ -401,43 +368,50 @@ const xmpBufSize = 256 * 1024
 // The caller-provided xmpBuf is reused across calls to avoid per-file allocations.
 // The file is read once: first xmpBufSize bytes are read into xmpBuf for XMP scanning,
 // then the file is seeked back to 0 for EXIF decoding.
-// Returns ok=false if EXIF cannot be read (not an error — file is still counted).
-func readExif(path string, xmpBuf []byte) (date time.Time, body string, lens string, rating int, ok bool) {
+// Missing or unsupported EXIF is normal; filesystem I/O failures are not.
+func readExif(path string, xmpBuf []byte) exifResult {
 	f, err := os.Open(path)
 	if err != nil {
-		return time.Time{}, "", "", 0, false
+		return exifResult{err: err}
 	}
 	defer f.Close()
 
 	// Read the head of the file for XMP scanning before EXIF decode.
 	// This avoids a second read/seek after imagemeta.Decode consumes the reader.
-	n, _ := f.Read(xmpBuf)
+	n, err := f.Read(xmpBuf)
+	if err != nil && err != io.EOF {
+		return exifResult{err: err}
+	}
 	xmpData := xmpBuf[:n]
 
 	// Seek back for EXIF decode.
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		return time.Time{}, "", "", 0, false
+		return exifResult{err: err}
 	}
 
 	exif, err := imagemeta.Decode(f)
 	if err != nil {
-		return time.Time{}, "", "", 0, false
+		var pathErr *os.PathError
+		if errors.As(err, &pathErr) {
+			return exifResult{err: err}
+		}
+		return exifResult{}
 	}
 
 	// Camera body: use raw EXIF Model string as-is.
-	body = strings.TrimSpace(exif.Model)
+	body := strings.TrimSpace(exif.Model)
 
 	// Lens: use raw EXIF LensModel string as-is.
-	lens = strings.TrimSpace(exif.LensModel)
+	lens := strings.TrimSpace(exif.LensModel)
 
 	// Star rating: check EXIF tag first, then scan XMP from the already-read buffer.
-	rating = int(exif.Rating)
+	rating := int(exif.Rating)
 	if rating == 0 {
 		rating = scanXMPRating(xmpData)
 	}
 
 	dto := exif.DateTimeOriginal()
-	return dto, body, lens, rating, true
+	return exifResult{date: dto, body: body, lens: lens, rating: rating}
 }
 
 // xmpRatingPrefix is the byte sequence before the rating digit in XMP.
@@ -469,15 +443,18 @@ func scanXMPRating(buf []byte) int {
 	return 0
 }
 
-func readXMPSidecarRating(path string) int {
+func readXMPSidecarRating(path string) (int, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return 0
+		return 0, err
 	}
 	defer f.Close()
 	buf := make([]byte, xmpBufSize)
-	n, _ := io.ReadFull(f, buf)
-	return scanXMPRating(buf[:n])
+	n, err := io.ReadFull(f, buf)
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		return 0, err
+	}
+	return scanXMPRating(buf[:n]), nil
 }
 
 func mediaStem(relPath string) string {

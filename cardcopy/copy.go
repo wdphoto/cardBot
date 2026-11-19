@@ -48,7 +48,7 @@ type Result struct {
 	BytesSkipped int64
 	Elapsed      time.Duration
 	DestPath     string
-	Warnings     []string // Non-fatal errors encountered during walk (permission, I/O)
+	Warnings     []string // Advisory diagnostics only; inventory errors are fatal.
 	VerifyMethod string   // Verification method used: "size" or "full"
 }
 
@@ -153,9 +153,6 @@ func PlanCopy(ctx context.Context, opts Options) (*Plan, error) {
 	}
 
 	dcim := filepath.Join(opts.CardPath, "DCIM")
-	if _, err := os.Stat(dcim); err != nil {
-		return nil, fmt.Errorf("no DCIM folder found on card")
-	}
 
 	// Build EXIF lookups from analyze result if available.
 	var exifDates map[string]string
@@ -167,49 +164,13 @@ func PlanCopy(ctx context.Context, opts Options) (*Plan, error) {
 	var files []fileEntry
 	var totalBytes int64
 	var selectedFiles int
-	var walkWarnings []string
 
-	err = filepath.WalkDir(dcim, func(path string, d os.DirEntry, err error) error {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		if err != nil {
-			// Log permission/IO errors but keep walking.
-			// Broken symlinks and not-exist are silently skipped.
-			if !os.IsNotExist(err) {
-				rel, _ := filepath.Rel(dcim, path)
-				walkWarnings = append(walkWarnings, fmt.Sprintf("%s: %v", rel, err))
-			}
-			return nil
-		}
-		if d.IsDir() {
-			if fsutil.IsHidden(d.Name()) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if fsutil.IsHidden(d.Name()) {
-			return nil
-		}
-		// Skip symlinks — only copy real files from the card.
-		if d.Type()&fs.ModeSymlink != 0 {
-			return nil
-		}
-
-		info, err := d.Info()
-		if err != nil {
-			return nil
-		}
-
-		rel, _ := filepath.Rel(dcim, path)
+	err = fsutil.WalkDCIM(ctx, dcim, func(path, rel string, info fs.FileInfo) error {
 
 		// Record selective-copy eligibility, but retain every file in the list.
 		// Timestamp sequence assignment is based on the complete card so a file
 		// receives the same name in all/photos/videos/selects modes.
-		ext := strings.ToUpper(strings.TrimPrefix(filepath.Ext(d.Name()), "."))
+		ext := strings.ToUpper(strings.TrimPrefix(filepath.Ext(rel), "."))
 		selected := true
 		if opts.Filter != nil {
 			if !opts.Filter(rel, ext) {
@@ -303,7 +264,6 @@ func PlanCopy(ctx context.Context, opts Options) (*Plan, error) {
 		Options:      opts,
 		Files:        make([]PlannedFile, 0, len(files)),
 		TotalBytes:   totalBytes,
-		Warnings:     walkWarnings,
 		VerifyMethod: verifyMethod,
 	}
 	if selectedFiles == 0 {
@@ -654,9 +614,16 @@ func classifyDestination(ctx context.Context, root *os.Root, f PlannedFile, full
 	if info.Size() != f.Size {
 		return "", fmt.Errorf("%w: %s exists with size %d; source size is %d", ErrDestinationConflict, f.DestPath, info.Size(), f.Size)
 	}
-	// Size mode compares against the length captured in the plan; it does not
-	// read either file here. Full mode must read both before accepting a skip.
+	// Do not credit a stale size match from the plan. Lstat also rejects a
+	// source that has become a symlink. Size mode never reads the payload.
 	if !fullVerify {
+		source, err := os.Lstat(f.SourcePath)
+		if err != nil {
+			return "", fmt.Errorf("checking source for size skip %s: %w", f.SourceRelPath, err)
+		}
+		if !source.Mode().IsRegular() || source.Size() != f.Size {
+			return "", fmt.Errorf("source %s changed since planning; cannot skip", f.SourceRelPath)
+		}
 		return ActionSkipSizeMatch, nil
 	}
 	src, err := os.Open(f.SourcePath)

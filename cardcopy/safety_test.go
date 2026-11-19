@@ -346,7 +346,7 @@ func TestExecute_RevalidatesFullVerificationSkips(t *testing.T) {
 
 func TestExecute_RevalidatesSizeSkips(t *testing.T) {
 	t.Parallel()
-	for _, change := range []string{"removed", "resized", "symlink"} {
+	for _, change := range []string{"removed", "resized", "symlink", "source removed", "source grew", "source symlink", "unchanged"} {
 		t.Run(change, func(t *testing.T) {
 			card := createTestCard(t, map[string]testFileSpec{
 				"IMG.JPG": {data: []byte("photo"), mtime: date(2026, 3, 8)},
@@ -360,7 +360,15 @@ func TestExecute_RevalidatesSizeSkips(t *testing.T) {
 				t.Fatal(err)
 			}
 			dst := plan.Files[0].DestPath
+			src := plan.Files[0].SourcePath
 			switch change {
+			case "source grew":
+				err = os.WriteFile(src, []byte("longer photo"), 0600)
+			case "source removed", "source symlink":
+				err = os.Remove(src)
+				if err == nil && change == "source symlink" {
+					err = os.Symlink(dst, src)
+				}
 			case "resized":
 				err = os.WriteFile(dst, []byte("changed size"), 0600)
 			case "removed", "symlink":
@@ -373,8 +381,17 @@ func TestExecute_RevalidatesSizeSkips(t *testing.T) {
 				t.Fatal(err)
 			}
 			result, err := Execute(context.Background(), plan, nil)
-			if !errors.Is(err, ErrDestinationConflict) || result.FilesSkipped != 0 || result.FilesCopied != 0 {
-				t.Fatalf("result=%+v error=%v, want conflict without success", result, err)
+			if change == "unchanged" {
+				if err != nil || result.FilesSkipped != 1 || result.BytesSkipped != 5 {
+					t.Fatalf("unchanged size match: result=%+v error=%v", result, err)
+				}
+				return
+			}
+			if err == nil || result.FilesSkipped != 0 || result.BytesSkipped != 0 || result.FilesCopied != 0 {
+				t.Fatalf("result=%+v error=%v, want failure without credit", result, err)
+			}
+			if (change == "resized" || change == "removed" || change == "symlink") && !errors.Is(err, ErrDestinationConflict) {
+				t.Fatalf("expected destination conflict, got %v", err)
 			}
 		})
 	}
