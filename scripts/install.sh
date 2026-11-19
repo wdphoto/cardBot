@@ -94,6 +94,18 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+# Resolve relative directories while the installer's working directory is
+# known. The uninstaller may be launched from somewhere entirely different.
+[ -n "$INSTALL_DIR" ] || die "install directory cannot be empty"
+case "$INSTALL_DIR" in
+  /*) ;;
+  *) INSTALL_DIR="$(pwd -P)/${INSTALL_DIR}" ;;
+esac
+case "$INSTALL_DIR" in
+  *'
+'*) die "install directory cannot contain a newline (install record is one line)" ;;
+esac
+
 need_cmd uname
 need_cmd curl
 need_cmd mktemp
@@ -162,13 +174,14 @@ if [ "$DRY_RUN" -eq 1 ]; then
 fi
 
 record_install() {
-  installed_path="$1"
-  mkdir -p "$STATE_DIR"
-  chmod 700 "$STATE_DIR"
-  record_tmp="${INSTALL_RECORD}.tmp.$$"
-  printf '%s\n' "$installed_path" >"$record_tmp"
-  chmod 600 "$record_tmp"
-  mv "$record_tmp" "$INSTALL_RECORD"
+  # Also canonicalize fallback/previously symlinked install directories.
+  installed_dir="$(CDPATH='' cd -P "$1" && pwd -P)" || return 1
+  mkdir -p "$STATE_DIR" && chmod 700 "$STATE_DIR" || return 1
+  record_tmp="$(mktemp "${INSTALL_RECORD}.tmp.XXXXXX")" || return 1
+  if ! printf '%s/cardbot\n' "$installed_dir" >"$record_tmp" || ! mv "$record_tmp" "$INSTALL_RECORD"; then
+    rm -f "$record_tmp"
+    return 1
+  fi
 }
 
 say "==> Downloading binary"
@@ -194,7 +207,7 @@ install_to_dir() {
   target_bin="${target_dir}/cardbot"
   mkdir -p "$target_dir"
   install -m 755 "$BIN_PATH" "$target_bin"
-  record_install "$target_bin" || say "Warning: could not record install path at ${INSTALL_RECORD}"
+  record_install "$target_dir" || say "Warning: could not record install path at ${INSTALL_RECORD}"
   say "==> Installed: ${target_bin}"
   "$target_bin" --version || true
   case ":$PATH:" in
@@ -221,7 +234,7 @@ fi
 if [ "$NO_SUDO" -eq 0 ] && command -v sudo >/dev/null 2>&1; then
   say "==> ${INSTALL_DIR} requires elevated permissions; attempting sudo install"
   if sudo mkdir -p "$INSTALL_DIR" && sudo install -m 755 "$BIN_PATH" "${INSTALL_DIR}/cardbot"; then
-    record_install "${INSTALL_DIR}/cardbot" || say "Warning: could not record install path at ${INSTALL_RECORD}"
+    record_install "$INSTALL_DIR" || say "Warning: could not record install path at ${INSTALL_RECORD}"
     say "==> Installed: ${INSTALL_DIR}/cardbot"
     "${INSTALL_DIR}/cardbot" --version || true
     exit 0

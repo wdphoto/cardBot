@@ -172,6 +172,27 @@ remove_dir_if_empty() {
   rmdir "$d" >/dev/null 2>&1 || true
 }
 
+# Old installers could record a path relative to an unknown directory. Stop
+# before probing binaries, stopping jobs, or deleting the sole recovery record.
+RECORDED_BIN=""
+if [ -f "$INSTALL_RECORD" ]; then
+  RECORDED_BIN="$(cat "$INSTALL_RECORD")"
+  case "$RECORDED_BIN" in
+    *'
+'*) valid_record=0 ;;
+    /*) valid_record=1 ;;
+    *) valid_record=0 ;;
+  esac
+  if [ "$valid_record" -eq 0 ]; then
+    say "Warning: ambiguous install record at $INSTALL_RECORD; not using it as a path."
+    if [ -z "$EXTRA_INSTALL_DIR" ]; then
+      say "Re-run with --install-dir /absolute/path/to/the/known/install/directory."
+      exit 1
+    fi
+    RECORDED_BIN=""
+  fi
+fi
+
 say "==> cardBot uninstaller"
 OS_RAW="$(uname -s)"
 CB_BIN="$(command -v cardbot 2>/dev/null || true)"
@@ -211,10 +232,6 @@ if [ "$OS_RAW" = "Darwin" ]; then
 fi
 
 # Remove the recorded install first, then verified legacy candidates.
-RECORDED_BIN=""
-if [ -f "$INSTALL_RECORD" ]; then
-  RECORDED_BIN="$(sed -n '1p' "$INSTALL_RECORD" 2>/dev/null || true)"
-fi
 remove_cardbot_candidate "$RECORDED_BIN"
 remove_cardbot_candidate "$CB_BIN"
 remove_cardbot_candidate "/usr/local/bin/cardbot"
