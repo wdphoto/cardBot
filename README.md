@@ -46,9 +46,9 @@ curl -fsSL https://raw.githubusercontent.com/wdphoto/cardBot/main/scripts/instal
 
 ## Development versions
 
-`VERSION` is the source of truth for development builds, currently **`0.0.11-dev`**. Both `go build` and `make build` use it; `make build` also records the commit, dirty-tree state, and build date separately. Local builds no longer derive their version from the nearest Git tag.
+`VERSION` is the source of truth for development builds, currently **`0.1.0-dev`**. Both `go build` and `make build` use it; `make build` also records the commit, dirty-tree state, and build date separately. Local builds no longer derive their version from the nearest Git tag.
 
-The next patch after `v0.0.10` is **`v0.0.11`**; the next minor milestone is **`v0.1.0`**. See [GitHub Latest](https://github.com/wdphoto/cardBot/releases/latest) for what is actually available. `0.0.10` users can run `cardbot self-update` once `0.0.11` is published. On an older `0.8.x` or `0.9.0` release, SemVer treats `0.0.11` as lower: to switch deliberately, rerun the [installer](#installation) after publication. The updater will not downgrade an existing binary.
+[**`v0.0.11`**](https://github.com/wdphoto/cardBot/releases/tag/v0.0.11) is published; **`v0.1.0`** is the next minor milestone, not a release yet. See [GitHub Latest](https://github.com/wdphoto/cardBot/releases/latest) for the current download. From `0.0.10`, run `cardbot self-update`. On an older `0.8.x` or `0.9.0` release, SemVer treats `0.0.11` as lower: rerun the [installer](#installation) if you want to switch lines. The updater will not downgrade an existing binary.
 
 Go’s `@latest` selects by SemVer, not GitHub’s Latest label; it currently resolves to the historical `v0.9.0` tag. Use the installer for a release binary, or check out the exact tag when building from source.
 
@@ -114,8 +114,8 @@ cardbot --setup
 | **0.0.7** | Code Refactor | Complete |
 | **0.0.8** | Card copy operations | Complete |
 | **0.0.10** | Release/copy correctness pass | Complete |
-| **0.0.11** | Ingest safety fixes and release hardening | Next patch |
-| **0.1.0** | Next minor milestone | Planned |
+| **0.0.11** | Ingest safety fixes and release hardening | Released |
+| **0.1.0** | Next minor milestone | In development |
 | **Later** | Copyright check and injection | Planned |
 
 The maintainer's technical backlog is in Tank at `.tank/notebook/TODO.md`, with supporting audits under `.tank/knowledge-base/reviews/`.

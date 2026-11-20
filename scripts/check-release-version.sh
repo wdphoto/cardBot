@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Validate a stable release tag against VERSION and tag names from the release remote.
-# In a clean checkout: git tag --list | bash scripts/check-release-version.sh v0.0.11 "$(< VERSION)"
+# In a fresh clone: dev=$(< VERSION); git tag --list | bash scripts/check-release-version.sh "v${dev%-dev}" "$dev"
 set -euo pipefail
 
 fail() {
